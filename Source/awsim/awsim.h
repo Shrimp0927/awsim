@@ -4,3 +4,5 @@
 
 #include "CoreMinimal.h"
 
+AWSIM_API DECLARE_LOG_CATEGORY_EXTERN(LogAwsim, Log, All);
+
