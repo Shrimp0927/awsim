@@ -4,7 +4,6 @@
 
 void UAgentSubsystem::Step(float StepSeconds)
 {
-	// Age the pool and recycle anything past its lifespan.
 	for (int32 i = Agents.Num() - 1; i >= 0; --i)
 	{
 		Agents[i].Age += StepSeconds;
@@ -14,9 +13,6 @@ void UAgentSubsystem::Step(float StepSeconds)
 		}
 	}
 
-	// Top up toward the count the macro state wants on screen, so agents appear
-	// and disappear in a continuous cycle. Kind mix, spawn placement, movement,
-	// and ISM rendering are all TODO.
 	const int32 Desired = DesiredAgentCount();
 	while (Agents.Num() < Desired)
 	{
@@ -39,8 +35,6 @@ void UAgentSubsystem::SpawnAgent(EAgentKind Kind)
 {
 	FAgent Agent;
 	Agent.Kind = Kind;
-	// Lifespan would come from the kind's FAgentKindDef (data-driven); loose
-	// default for now.
 	Agent.Lifespan = 8.f;
 	Agents.Add(Agent);
 }

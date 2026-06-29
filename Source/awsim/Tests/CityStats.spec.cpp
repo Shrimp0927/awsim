@@ -18,7 +18,7 @@ void FCityStatsSpec::Define()
 {
 	Describe("Starting state", [this]()
 	{
-		It("starts the Overlord rating at 50", [this]()
+		It("starts the Player rating at 50", [this]()
 		{
 			// expect: CityStats->GetRating() == 50
 		});

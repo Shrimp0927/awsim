@@ -1,36 +1,76 @@
 #include "Simulation/GridSubsystem.h"
 
+namespace
+{
+	FIntPoint FootprintExtent(const FGridContent& Content)
+	{
+		FIntPoint Dim(1, 1);
+		if (Content.Definition)
+		{
+			Dim = Content.Definition->Dimensions;
+		}
+		if (Content.Facing == EDirection::East || Content.Facing == EDirection::West)
+		{
+			return FIntPoint(Dim.Y, Dim.X);
+		}
+		return Dim;
+	}
+
+	bool FootprintCovers(const FGridCoord& Origin, const FGridContent& Content, const FGridCoord& Tile)
+	{
+		const FIntPoint Extent = FootprintExtent(Content);
+		return Tile.X >= Origin.X && Tile.X < Origin.X + Extent.X
+			&& Tile.Y >= Origin.Y && Tile.Y < Origin.Y + Extent.Y;
+	}
+}
+
 void UGridSubsystem::Step(float StepSeconds)
 {
-	// Nothing to advance yet — placement is event-driven, and concrete content
-	// types are being reworked. The per-step slot stays reserved for any derived
-	// rebuild (e.g. a transport-network graph) once content returns.
+}
+
+const FGridContent* UGridSubsystem::FindCovering(FGridCoord Tile) const
+{
+	if (const FGridContent* Found = Occupancy.Find(Tile))
+	{
+		if (Found->Type != EPlaceableType::None)
+		{
+			return Found;
+		}
+	}
+
+	for (const TPair<FGridCoord, FGridContent>& Pair : Occupancy)
+	{
+		if (Pair.Value.Type == EPlaceableType::None || Pair.Key == Tile)
+		{
+			continue;
+		}
+		if (FootprintCovers(Pair.Key, Pair.Value, Tile))
+		{
+			return &Pair.Value;
+		}
+	}
+
+	return nullptr;
 }
 
 bool UGridSubsystem::IsTileOccupied(FGridCoord Tile) const
 {
-	const EGridContent* Found = Occupancy.Find(Tile);
-	return Found && *Found != EGridContent::Empty;
+	return FindCovering(Tile) != nullptr;
 }
 
-EGridContent UGridSubsystem::GetContentAt(FGridCoord Tile) const
+FGridContent UGridSubsystem::GetContentAt(FGridCoord Tile) const
 {
-	const EGridContent* Found = Occupancy.Find(Tile);
-	return Found ? *Found : EGridContent::Empty;
+	const FGridContent* Found = FindCovering(Tile);
+	return Found ? *Found : FGridContent();
 }
 
-bool UGridSubsystem::SetContent(FGridCoord Tile, EGridContent Content)
+bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 {
-	if (Content == EGridContent::Empty)
+	if (Content.Type == EPlaceableType::None)
 	{
 		return Occupancy.Remove(Tile) > 0;
 	}
 
-	EGridContent& Slot = Occupancy.FindOrAdd(Tile);
-	if (Slot == Content)
-	{
-		return false;
-	}
-	Slot = Content;
+	Occupancy.Add(Tile, Content);
 	return true;
 }

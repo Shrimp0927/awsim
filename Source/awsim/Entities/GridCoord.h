@@ -3,16 +3,6 @@
 #include "CoreMinimal.h"
 #include "GridCoord.generated.h"
 
-/**
- * An integer tile coordinate on the city grid.
- *
- * Plain value type shared by everything the grid places (roads today; buildings,
- * airstrips, ... later — see GridSubsystem). Kept reflection-friendly and
- * hashable so it can key the grid's occupancy map.
- *
- * NOTE: the grid model (square tiles vs. freeform) is still an open question
- * (ARCHITECTURE.md §8). Tiles are the loose first pass.
- */
 USTRUCT()
 struct FGridCoord
 {

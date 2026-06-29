@@ -23,7 +23,6 @@ void USimulationSubsystem::RebuildPhaseOrder()
 		return;
 	}
 
-	// Collect every phase subsystem in this world and order them low -> high.
 	TArray<USimPhase*> Phases = World->GetSubsystemArrayCopy<USimPhase>();
 	Phases.Sort([](const USimPhase& A, const USimPhase& B)
 	{
@@ -52,7 +51,6 @@ void USimulationSubsystem::Tick(float DeltaSeconds)
 
 	Accumulator += DeltaSeconds * GameSpeed;
 
-	// Cap steps per frame so a hitch can't spiral into a catch-up freeze.
 	const int32 MaxStepsPerFrame = 8;
 	int32 Steps = 0;
 	while (Accumulator >= FixedStep && Steps < MaxStepsPerFrame)
@@ -65,7 +63,6 @@ void USimulationSubsystem::Tick(float DeltaSeconds)
 
 void USimulationSubsystem::StepOnce()
 {
-	// Serialized, ordered phases: each sees the completed result of the last.
 	for (USimPhase* Phase : OrderedPhases)
 	{
 		if (Phase)
