@@ -24,7 +24,10 @@ _(draft — the north stars every feature should serve)_
 1. **Stay in power.** Success is political survival, not endless expansion.
    Keep citizens satisfied or lose your office.
 2. **Indirect stewardship.** You manage conditions and services, never the
-   citizens themselves; the city responds as a system.
+   citizens themselves; the city responds as a system. You act through two levers:
+   **building** infrastructure on the map, and **tuning sliders** on the
+   interactables you place. (The systems those levers feed are catalogued in
+   `Domains.md`.)
 3. **Balance under scarcity.** There is no "right" option — higher quality lifts
    ratings but drains resources, cheaper choices conserve budget but cost
    wellbeing. The game *is* the constant trade-off of building a good city with
@@ -33,48 +36,54 @@ _(draft — the north stars every feature should serve)_
 ## 3. Core loop
 
 ```
-   1. COLLECT  ── tax a % of each citizen's net worth, every X days ──► budget
-   2. ALLOCATE ── spend budget on buildings & services
+   1. COLLECT  ── tax a % of the city's aggregate wealth, every X days ──► budget
+   2. ALLOCATE ── build infrastructure, then tune sliders on it
    3. RIPPLE   ── buildings change citizen needs & the economy
    4. REACT    ── satisfaction moves your Overlord rating; read it, adjust
                                     │
                                     └──► repeat. Rating too low = term ends.
 ```
 
-## 4. Citizens — the heart of the sim
+## 4. Citizens — measured in aggregate
 
-Each citizen carries two tiers of state:
+Citizens are the heart of the game, but the sim does **not** model them one by
+one. The city is run **top-down**: a handful of **macro stats** are the source of
+truth, and the citizens/cars/planes you see are a *visual projection* of those
+stats — not the thing being simulated.
 
-| Tier                | Attributes                     | Changes        | Drives                              |
-|---------------------|--------------------------------|----------------|-------------------------------------|
-| **Long-term**       | net worth, health, satisfaction | slowly         | satisfaction → Overlord rating      |
-| **Daily (short)**   | hunger, energy, mood           | every day      | productivity → world resource output |
+The macro stats:
 
-The two tiers feed two causal chains:
+| Stat                 | Changes | Drives                                  |
+|----------------------|---------|-----------------------------------------|
+| **Population**       | slowly  | tax base size; how busy the city looks  |
+| **Aggregate wealth** | slowly  | the tax base → Overlord budget          |
+| **Satisfaction**     | slowly  | → Overlord rating → stay in office?     |
+
+The causal chain:
 
 ```
-   Buildings & service quality ─► hunger / energy / mood (daily)
+   Buildings & service quality ─► macro stats (population, wealth, satisfaction)
                                           │
                                           ▼
-                              productivity / efficiency
+                       satisfaction ─► Overlord rating ─► stay in office?
                                           │
                                           ▼
-                              world resource generation
-   (a tired or hungry citizen works below their max)
-
-
-   net worth + health ─► satisfaction ─► Overlord rating ─► stay in office?
+              agents spawned to represent the state (citizens / cars / planes)
 ```
 
-**Quality is a trade-off.** Daily needs are shaped by *how well* you provide —
-a better food source keeps hunger lower than a cheap one. But quality costs more,
-so every provision is a decision: spend to lift wellbeing (and ratings), or
-conserve resources and accept the lower outcome. Balancing this across the whole
-city under a limited budget is the core of the game.
+**Quality is a trade-off.** How well you provide shapes the macro stats — a better
+food source lifts satisfaction more than a cheap one. But quality costs more, so
+every provision is a decision: spend to lift the stats (and ratings), or conserve
+budget and accept the lower outcome. Balancing this across the whole city under a
+limited budget is the core of the game.
+
+> **Why macro, not per-citizen?** The stats *are* the game; individual agents are
+> *rendered* from them and are deliberately ephemeral — they appear and disappear
+> in a cycle. See `ARCHITECTURE.md` §5 and `ENTITIES.md`.
 
 ## 5. Economy & building
 
-- **Revenue:** every X days, tax collects a **% of each citizen's net worth**
+- **Revenue:** every X days, tax collects a **% of the city's aggregate wealth**
   into the Overlord's budget.
 - **Spending:** the budget buys and upgrades infrastructure and services —
   roads, energy supplies, schools, office buildings, companies, restaurants,
@@ -87,7 +96,20 @@ city under a limited budget is the core of the game.
 > so new buildings can be added without code changes — this is how we keep the
 > game easily extensible as it grows.
 
-## 6. Iteration 1 — in scope
+## 6. Simulation domains — the long game
+
+Under the hood awsim aims to be a **deep, interconnected civilization simulation**:
+many systems (economy, energy, health, transport, housing, environment, …) that
+the player shapes via the two levers above, and that feed one another. These are
+the "conditions" citizens live under — aggregated into the macro stats that drive
+satisfaction and your rating.
+
+The full catalogue (18 domains) lives in **`Domains.md`**. It is a long-horizon
+target, **not** current scope — almost none of it is built. We will pick a small
+vertical slice of domains first (see `Domains.md` open questions) and prove the
+build → tune → interconnect loop before widening.
+
+## 7. Iteration 1 — in scope
 
 _(proposed minimal slice — confirm/adjust)_
 
@@ -99,17 +121,18 @@ _(proposed minimal slice — confirm/adjust)_
 - Satisfaction → Overlord rating, shown as a visible meter.
 - A lose condition when the rating bottoms out.
 
-## 7. Out of scope (for now)
+## 8. Out of scope (for now)
 
 - Multiplayer.
 - Deep Overlord identity/flavor (naming is cosmetic for now).
 - Rich economy modelling, advanced pathfinding, polished art.
 
-## 8. Open questions
+## 9. Open questions
 
-- Does daily **mood** feed long-term satisfaction directly, or only via productivity?
-- How is **net worth** generated and grown (jobs, company profits, wages)?
+- What exactly moves **satisfaction** — which services/qualities, and how fast?
+- How is **aggregate wealth** generated and grown (jobs, company profits, wages)?
 - Tax cadence and rate: what is "X days", and what %?
-- What changes a citizen's **health** (food quality, services, pollution)?
+- Which macro stats beyond satisfaction matter (health, employment, …), and what
+  feeds them from the grid?
 - Rating thresholds — what counts as "doing well" vs. "term ends"?
 - Map model: grid vs. freeform placement (ties to `ARCHITECTURE.md` §8).

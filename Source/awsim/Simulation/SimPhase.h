@@ -23,7 +23,7 @@ public:
 	/** Advance this phase by one fixed step. Runs after every lower-ordered phase. */
 	virtual void Step(float StepSeconds) {}
 
-	/** Lower runs first. Suggested bands: Time=100, Grid=200, Population=400,
-	 *  Economy=500 (Economy taxes Population's updated net worth, so runs after it). */
+	/** Lower runs first. Suggested bands: Time=100, Grid=200, CityStats=800
+	 *  (last sim phase), Agents=900 (representation; reads finished sim output). */
 	virtual int32 PhaseOrder() const { return 0; }
 };

@@ -1,13 +1,18 @@
 # awsim — Subsystems
 
-> **Why this exists.** The simulation is the game: a city of citizens whose
-> conditions the Overlord shapes to stay in power (`DESIGN.md`). Subsystems are
-> the engine-managed singletons that run that simulation — one clock driving a
-> fixed order of phases (`ARCHITECTURE.md` §4, §6). This document is a **living
-> reference** to the subsystems that exist *today*, what each does, and where it
-> is still a placeholder.
+> **Why this exists.** The simulation is the game. Under the **macro model**
+> (`DESIGN.md` §4) the city is run top-down: the **grid** (what's built) plus a
+> few **macro stats** are the source of truth, and the citizens/cars/planes you
+> see are a *projection* of that state. Subsystems are the engine-managed
+> singletons that run it — one clock driving a fixed order of phases
+> (`ARCHITECTURE.md` §4, §6). This is a **living reference** to the subsystems
+> that exist today, what each does, and where it is still a placeholder.
 >
 > Status: **living document** — kept in step with `Source/awsim/Simulation/`.
+>
+> _Reworking in progress: `EconomySubsystem` has been scrapped (a future economy
+> phase will return), and the grid's concrete content types (previously roads) are
+> being rebuilt from the ground up._
 
 ---
 
@@ -17,14 +22,14 @@
 USimulationSubsystem            the single clock (ticks per frame)
   └─ steps, in PhaseOrder:
        USimPhase  (abstract)    base class for every phase
-         ├─ UPopulationSubsystem   order 400 — citizens' daily state + tax base
-         └─ UEconomySubsystem      order 500 — treasury + tax collection
+         ├─ UGridSubsystem         order 200 — placement authority (tile occupancy)
+         ├─ UCityStatsSubsystem    order 800 — macro stats (pop, wealth, rating)
+         └─ UAgentSubsystem        order 900 — ephemeral visual agents (crowd)
 ```
 
-Only **Population** and **Economy** are implemented. `Time`, `Grid`, and
-`Traffic` from the architecture's phase plan (`ARCHITECTURE.md` §6) do not exist
-yet; their roles are currently faked inside the existing phases (see notes
-below).
+These four (plus the `USimPhase` base) are the current skeleton. `Time`,
+`Economy`, and `Traffic` phases do not exist; the calendar/cadence and economy
+they would own are not implemented.
 
 ---
 
@@ -34,7 +39,9 @@ below).
 
 The one orchestrator that advances the whole sim. It is the **only** thing that
 ticks per frame; every phase is stepped from here so phase order — and therefore
-the result — is deterministic (`ARCHITECTURE.md` §6, Rule 1).
+the result — is deterministic (`ARCHITECTURE.md` §6, Rule 1). It runs the sim
+**synchronously on the game thread** (the async snapshot pipeline in
+`ARCHITECTURE.md` §6 is a deferred optimization, not built).
 
 **Currently features:**
 
@@ -75,8 +82,7 @@ but are stepped by the orchestrator, never by their own tick.
 - **`Step(float StepSeconds)`** — advance one fixed step. Default no-op; override
   per phase.
 - **`PhaseOrder()`** — lower runs first. Documented bands: `Time=100`, `Grid=200`,
-  `Population=400`, `Economy=500` (Economy after Population so it taxes updated
-  net worth).
+  `CityStats=300`, `Agents=900` (representation, reads finished output).
 - Marked `UCLASS(Abstract)` so it is never instantiated directly.
 
 **To add a phase:** subclass `USimPhase`, choose a `PhaseOrder`, implement
@@ -85,79 +91,130 @@ automatically.
 
 ---
 
-## `UPopulationSubsystem` — citizens & the tax base
+## `UGridSubsystem` — placement authority
 
-`PopulationSubsystem.{h,cpp}` — `PhaseOrder() = 400`
+`GridSubsystem.{h,cpp}` — `PhaseOrder() = 200`
 
-Owns every citizen's data and advances their daily state each step. It is the
-single source of truth for the population (`ARCHITECTURE.md` §5) and the heart of
-the sim — citizen satisfaction is ultimately what the Overlord is graded on
-(`DESIGN.md` §4).
+The city grid: the placement authority for everything placed on the map
+(`ARCHITECTURE.md` §4, §6). Runs early (order 200) so it's settled before
+CityStats and the crowd read it.
 
-**Currently features:**
+**Currently a skeleton** (concrete content types are being reworked):
 
-- **Owns `TArray<FCitizen> Citizens`** — the contiguous, POD-friendly data array
-  (`Transient`).
-- **Seeding.** `OnWorldBeginPlay` seeds **100** citizens if empty;
-  `SeedCitizens(Count)` adds citizens with `NetWorth = 1000`. Temporary test
-  seeding.
-- **Per-step daily drift (`Step`).** A simple loop over all citizens:
-  - `Hunger` rises (`+0.02/s`), `Energy` falls (`-0.01/s`), both clamped 0..1.
-  - `Mood` eases toward a fed-and-rested target.
-  - Long-term `Satisfaction` eases toward a health + net-worth proxy
-    (`DESIGN.md` §4), slowly.
-- **Readouts.** `NumCitizens()`, `AverageProductivity()` (mean of each citizen's
-  `Productivity()` — a loose city-health number), and `TotalNetWorth()` (the tax
-  base consumed by Economy).
+- **Generic occupancy** — `TMap<FGridCoord, EGridContent> Occupancy` mapping each
+  tile to what sits on it. Authoritative placement state, so it is **not**
+  `Transient` (the save/load layer persists it; see § "Persistence").
+- **`EGridContent`** — the content enum, currently `Empty` and a reserved
+  `Building`. Concrete types (buildings, transport, …) return with the rework.
+- **Tile API** — `IsTileOccupied(Tile)`, `GetContentAt(Tile)`, and
+  `SetContent(Tile, Content)` (passing `Empty` clears; returns false on a no-op).
 
 **Placeholder / not yet:**
 
-- Update is a **plain serial loop** — the per-citizen work is independent and is
-  explicitly intended to go data-parallel with double-buffering later
-  (`ARCHITECTURE.md` §6, Rule 2). Not done yet.
-- Needs drift in a vacuum: **building / service quality** (the thing that should
-  offset hunger/energy and shape outcomes) is not modelled, so nothing yet
-  *improves* a citizen — they only decay.
-- No projection to visuals (no ISM sync) yet.
+- **`Step()` is a no-op** — placement is event-driven. The per-step slot is
+  reserved for any derived rebuild (e.g. a transport-network graph) once content
+  returns.
+- **No concrete content** — roads were scrapped; buildings/transport are not built.
+- **No placement input/UI** — the API exists but nothing calls it yet.
+- **Grid model still provisional** — tile-based is the loose first pass; square
+  tiles vs. freeform is an open question (`ARCHITECTURE.md` §8).
 
 ---
 
-## `UEconomySubsystem` — treasury & tax cycle
+## `UCityStatsSubsystem` — the macro stats
 
-`EconomySubsystem.{h,cpp}` — `PhaseOrder() = 500`
+`CityStatsSubsystem.{h,cpp}` — `PhaseOrder() = 800`
 
-The Overlord's treasury and the collect half of the core loop (`DESIGN.md` §5).
-Runs *after* Population so it taxes freshly updated net worth. Closes the
-"`COLLECT` → budget" step that the rest of the economy will spend from.
+The top-down source of truth for "how's the city doing" (`DESIGN.md` §4). Under
+the macro model nobody is simulated individually; a handful of aggregate numbers,
+derived from the grid, drive the whole game and everything that gets visualised.
+Runs as the **last simulation phase** (order 800) — right before the Agent crowd
+(900) projects it — so the visualised crowd reflects the freshest stats.
 
 **Currently features:**
 
-- **Treasury.** `GetBudget()`, `AddFunds(Amount)`, and `TrySpend(Amount)` which
-  refuses (returns `false`, spends nothing) if the amount is negative or
-  unaffordable.
-- **Tax cycle (`Step`).** Accrues a `TaxTimer`; every `TaxIntervalSeconds`
-  (default **10s**) it calls `CollectTaxes()`.
-- **Collection.** Reads `UPopulationSubsystem::TotalNetWorth()`, takes
-  `TaxRate` (default **2%**) into the budget, and logs the revenue, new budget,
-  and citizen count via `LogAwsim`.
+- **Macro readouts** — `GetPopulation()`, `GetAverageSatisfaction()` (0..1),
+  `GetOverlordRating()` (0..1), `GetTaxableWealth()`.
+- **Wealth deduction** — `DeductWealth(Amount)`, exposed for a future economy
+  phase to move taxed wealth into a treasury (the previous Economy phase was
+  scrapped pending rework).
+- **`RatingFromSatisfaction(s)`** — a pure static mapping (clamped 0..1).
+- **Loose seeding** — `OnWorldBeginPlay` seeds 100 population and 100,000 wealth
+  if empty. `Step()` recomputes the rating from satisfaction each tick.
+- Stats are authoritative game state (**not** `Transient`).
 
 **Placeholder / not yet:**
 
-- Tax cadence is **seconds-based** (`TaxIntervalSeconds`), explicitly standing in
-  for "every X days" until a `TimeSubsystem` owns the calendar.
-- **No spending side** — building/service costs, upgrades, and the `ALLOCATE`
-  step of the loop are not implemented; only `COLLECT` exists.
-- Rates (`TaxRate`, interval) are loose placeholders, not yet data-driven.
+- **Stats don't derive from the city yet** — population, wealth, and satisfaction
+  are seeded/steady placeholders. They're meant to come from the grid's housing
+  capacity, jobs, and service quality once buildings exist (`DESIGN.md` §4/§5).
+- **Satisfaction is static** — nothing yet moves it, so the rating is flat.
+- **No consumer for wealth** — `GetTaxableWealth`/`DeductWealth` await the reworked
+  economy phase.
+
+---
+
+## `UAgentSubsystem` — the crowd (representation)
+
+`AgentSubsystem.{h,cpp}` — `PhaseOrder() = 900`
+
+Spawns, ages, and recycles the ephemeral visual agents (citizens/cars/planes)
+that represent the macro state on screen. This is the **representation layer, not
+simulation** (`ARCHITECTURE.md` §4/§5): agents are a disposable projection of the
+macro stats + grid, never the source of truth. Runs last (order 900) so it reads
+finished grid/macro output.
+
+**Currently features:**
+
+- **Ephemeral agent pool** — `TArray<FAgent> Agents`, marked `Transient` (the
+  *correct* use of `Transient`: this data is rebuilt at runtime and never saved).
+- **Lifecycle (`Step`).** Ages every agent, despawns any past its `Lifespan`
+  (swap-remove), then tops the pool up toward `DesiredAgentCount()` so agents
+  appear and disappear in a continuous cycle.
+- **Macro-driven count** — `DesiredAgentCount()` reads
+  `UCityStatsSubsystem::GetPopulation()` and divides by `PeoplePerAgent`
+  (default 10).
+- `NumAgents()` readout.
+
+**Placeholder / not yet:**
+
+- **No rendering** — there is no ISM projection, mesh, or animation yet; the pool
+  is just numbers. Movement (`Velocity`/`Position`) is unused.
+- **Pedestrians only** — `SpawnAgent` always spawns `Pedestrian`; vehicles/
+  aircraft and the kind mix are not implemented.
+- **`FAgentKindDef` not wired in** — per-kind lifespan/anim/speed come from a
+  hardcoded default, not yet from a Data Table/Asset.
+- **Should it be a phase?** It's modelled as a high-order `USimPhase` (900) for
+  now; strictly it's representation and may move to a dedicated post-sim
+  visual-sync pass (`ARCHITECTURE.md` §6) later.
+
+---
+
+## Persistence
+
+What's saved vs. rebuilt, by design (`ARCHITECTURE.md` §4 — a GameInstance-backed
+save/load layer that is **not built yet**):
+
+| Data                                   | Saved? | Why                                       |
+|----------------------------------------|--------|-------------------------------------------|
+| `UGridSubsystem::Occupancy`            | yes    | authoritative placement state             |
+| `UCityStatsSubsystem` macro stats      | yes    | authoritative city state                  |
+| `UAgentSubsystem::Agents`              | no     | ephemeral projection; recycled at runtime |
+
+Note: marking data non-`Transient` only keeps it *serializable* — nothing
+actually saves until the save/load layer exists. World subsystems aren't
+auto-saved the way level Actors are.
 
 ---
 
 ## Known gaps vs. the architecture plan
 
-These phases are named in `ARCHITECTURE.md` §6 but are **not built yet**:
+Phases named in `ARCHITECTURE.md` §6 but **not built (or scrapped pending
+rework)**:
 
 - **`TimeSubsystem`** (order ~100) — calendar + speed ownership. Today the day
-  clock lives in the orchestrator and tax cadence lives in Economy.
-- **`GridSubsystem`** (order ~200) — tiles and placement validity. No placement
-  exists yet.
-- **`TrafficSubsystem`** — commuting/pathfinding. `ECitizenState::Commuting`
-  exists on the data side but nothing drives it.
+  clock lives in the orchestrator.
+- **Economy phase** (~order 500) — treasury + tax cycle. Scrapped; will return to
+  consume `CityStats`'s taxable wealth.
+- **`TrafficSubsystem`** — movement/pathfinding for agents over placed transport.
+  Needs concrete grid content (roads) and a network graph first.

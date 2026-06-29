@@ -1,81 +1,110 @@
 # awsim — Entities
 
-> **Why this exists.** Entities are the *things* the simulation moves around —
-> the per-object state that subsystems read and write each tick. Following the
-> project's core rule, entity **state is plain data** (structs in arrays),
-> simulated independently of how (or whether) it is drawn (`ARCHITECTURE.md` §2,
-> §5). This document is a **living reference** to the entity types that exist
-> today and the state each one carries.
+> **Why this exists.** Entities are the *things* the data layer holds. Under the
+> **macro model** (`DESIGN.md` §4) the simulation's source of truth is the **grid**
+> (what's built) plus a handful of **macro stats** — *not* per-citizen state. The
+> citizens/cars/planes you see are a *disposable projection* of the macro state and
+> are never saved (`ARCHITECTURE.md` §2, §5). This is a **living reference** to the
+> entity types that exist today.
 >
 > Status: **living document** — kept in step with `Source/awsim/Entities/`.
+>
+> _Reworking in progress: the persistent grid-content entities (previously `FRoad`)
+> have been scrapped and are being rebuilt from the ground up — none exist yet._
 
 ---
 
 ## Map of what's built
 
 ```
-FCitizen        the only entity type so far — one simulated citizen
-  ECitizenState   its coarse daily activity enum
+Value primitives:
+  FGridCoord      integer tile coordinate used by the grid
+
+Ephemeral representation (projection of game state, never saved):
+  FAgent          one live visual agent on screen (owned by UAgentSubsystem)
+    EAgentKind      pedestrian / vehicle / aircraft
+  FAgentKindDef   data-driven description of an agent kind (lifespan, anim, speed)
 ```
 
-`FBuilding` is referenced throughout the design and architecture docs but does
-**not** exist yet. Citizen is the only entity currently implemented.
+Only `FGridCoord` and the agent types exist. There is currently **no persistent
+grid-content entity** — roads were scrapped and buildings (`FBuilding`) are not
+built yet.
 
 ---
 
-## `FCitizen` — one simulated citizen
+## `FGridCoord` — tile coordinate (value primitive)
 
-`Entities/Citizen.h` (header-only)
+`Entities/GridCoord.h` (header-only)
 
-The heart of the sim. Citizens carry the state the Overlord is ultimately graded
-on: keep them satisfied or lose office (`DESIGN.md` §4). It is a **plain
-`USTRUCT`, not a `UObject`** — thousands live contiguously in the
-`TArray<FCitizen>` owned by `UPopulationSubsystem`, kept cheap and POD-friendly
-so the daily update can go data-parallel later (`ARCHITECTURE.md` §5).
+Not an entity — a small shared value type (`int32 X, Y`) used by the grid.
+Reflection-friendly and hashable (`GetTypeHash`) so it can key the grid's
+occupancy map (`UGridSubsystem`, see `SUBSYSTEMS.md`). Tile-based addressing is a
+provisional choice (grid model is open — `ARCHITECTURE.md` §8).
 
-**Currently features two tiers of state** (`DESIGN.md` §4):
+---
 
-| Tier          | Field          | Range / meaning                       | Default |
-|---------------|----------------|---------------------------------------|---------|
-| **Long-term** | `NetWorth`     | wealth; the tax base                   | `0`     |
-| (drives the   | `Health`       | `0..1`                                 | `1`     |
-| Overlord rating) | `Satisfaction` | `0..1`                              | `0.5`   |
-| **Daily**     | `Hunger`       | `0` = full … `1` = starving            | `0`     |
-| (drives       | `Energy`       | `1` = rested … `0` = exhausted         | `1`     |
-| productivity) | `Mood`         | `0..1`                                 | `0.5`   |
+## Agents — the ephemeral representation
 
-Plus:
+`Entities/Agent.h` (header-only)
 
-- **`State` (`ECitizenState`)** — coarse daily activity:
-  `AtHome` / `Commuting` / `Working` / `Leisure`. Default `AtHome`.
-- **`Productivity()`** — derived `0..1` readout of how effectively the citizen
-  works *right now*. First-pass formula: the mean of "fed" (`1 - Hunger`),
-  `Energy`, and `Mood`. This is the bridge from daily state to world resource
-  output described in `DESIGN.md` §4.
+The citizens, cars, and planes you *see*. They are **not** the simulation — under
+the macro model nobody is individually simulated. Each agent is a **disposable
+projection** of the macro stats + grid: `UAgentSubsystem` spawns them, ages them,
+and recycles them in a continuous cycle so the screen reflects the city's state
+(see `SUBSYSTEMS.md`). Everything here is **pure ephemeral — never saved.**
 
-**How it's used today:** `UPopulationSubsystem` drifts the daily fields each step
-and eases `Satisfaction` toward a health/net-worth proxy; `Economy` taxes
-`NetWorth`. See `SUBSYSTEMS.md`.
+### `EAgentKind` — what an agent is
+
+`Pedestrian` (a "citizen"), `Vehicle` (a car), `Aircraft` (a plane). Extensible —
+add a value per new kind. The kind selects which `FAgentKindDef` to use, and
+therefore the mesh, animation, lifespan, and movement behaviour.
+
+### `FAgentKindDef` — the data-driven *kind* description
+
+Defines how a kind looks and behaves — the "type", meant to be authored in a Data
+Table / Data Asset in the editor (`ARCHITECTURE.md` §2.3), not hardcoded.
+
+| Field      | Type         | Meaning                                       | Default       |
+|------------|--------------|-----------------------------------------------|---------------|
+| `Kind`     | `EAgentKind` | which kind this describes                      | `Pedestrian`  |
+| `Lifespan` | `float`      | seconds on screen before it despawns          | `8`           |
+| `MoveSpeed`| `float`      | world units / second while moving             | `150`         |
+| `AnimSet`  | `FName`      | animation set; bound to an asset later         | *(none)*      |
+
+### `FAgent` — one live instance
+
+The minimal per-instance runtime record, held `Transient` in `UAgentSubsystem`'s
+pool. This is the *correct* use of `Transient` — ephemeral data rebuilt at runtime
+and never saved.
+
+| Field      | Type         | Meaning                                       | Default       |
+|------------|--------------|-----------------------------------------------|---------------|
+| `Kind`     | `EAgentKind` | which kind this instance is                    | `Pedestrian`  |
+| `Position` | `FVector`    | where it is in the world                       | `0,0,0`       |
+| `Velocity` | `FVector`    | current movement                               | `0,0,0`       |
+| `Age`      | `float`      | seconds alive so far                           | `0`           |
+| `Lifespan` | `float`      | once `Age >= Lifespan`, it despawns            | `8`           |
 
 **Placeholder / not yet:**
 
-- **No position or building links.** The architecture's sketch of `FCitizen`
-  includes `Position`, `HomeBuilding`, and `WorkBuilding` (`ARCHITECTURE.md` §5);
-  none exist yet, so citizens have no place in the world and `Commuting` /
-  `Working` states are never actually entered.
-- **No visual projection.** No ISM instance index / transform mapping yet — the
-  data exists but is not drawn.
-- `Productivity()` and the satisfaction proxy are loose first passes, not tuned
-  or data-driven.
+- **Lifecycle only** — `UAgentSubsystem` spawns/ages/recycles; **movement,
+  animation, and ISM rendering are TODO** (no visuals are built yet).
+- **`FAgentKindDef` is a schema with hardcoded defaults** — not yet sourced from a
+  Data Table/Asset, so per-kind lifespan/anim/speed aren't wired through to spawns.
+- **Pedestrians only** — `SpawnAgent` only spawns `Pedestrian`; vehicles/aircraft
+  and the rules for how many of each to show aren't implemented.
 
 ---
 
 ## Known gaps vs. the design/architecture plan
 
-- **`FBuilding`** — the other half of the loop (`ARCHITECTURE.md` §5, §7;
-  `DESIGN.md` §5). Buildings are meant to shape citizen needs and the economy via
-  data-driven *quality tiers*, render via ISM, and promote to a full Actor only
-  while selected. None of this is built — there are no buildings, no placement,
-  and so nothing yet *improves* a citizen's daily needs.
-- **Representation components** — the data↔visual seam (ISM projection, selection
-  by instance index) named in `ARCHITECTURE.md` §5 has no entity-side code yet.
+- **Persistent grid content** — there is currently no placed-content entity at all
+  (roads scrapped, buildings not built). When rebuilt, this content lives in
+  `UGridSubsystem` as plain structs (the `EGridContent::Building` slot is already
+  reserved) and is authoritative, saved state — the opposite of the ephemeral
+  agents.
+- **`FBuilding`** — the planned half of the loop (`ARCHITECTURE.md` §5, §7;
+  `DESIGN.md` §5): buildings shape the macro stats (housing capacity, jobs,
+  services, wealth growth) via data-driven *quality tiers*, render via ISM, and
+  promote to a full Actor only while selected. Not built yet, so the macro stats
+  are loose seeded values rather than derived from the city.

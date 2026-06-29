@@ -9,7 +9,7 @@ public class awsim : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		// Put the module root on the include path so we can include headers by
-		// subfolder, e.g. "Simulation/SimPhase.h" or "Entities/Citizen.h".
+		// subfolder, e.g. "Simulation/SimPhase.h" or "Entities/Agent.h".
 		PublicIncludePaths.Add(ModuleDirectory);
 
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });

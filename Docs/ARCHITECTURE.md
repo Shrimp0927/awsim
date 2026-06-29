@@ -56,15 +56,15 @@ Input / Camera layer     Camera Pawn + PlayerController (picking, placement)
         |
 Simulation layer         WorldSubsystems on a fixed tick:
         |                  - TimeSubsystem (calendar, speed)
-        |                  - EconomySubsystem (money, power, water...)
-        |                  - PopulationSubsystem (citizens)
         |                  - GridSubsystem (tiles, placement validity)
+        |                  - CityStatsSubsystem (macro stats: pop, wealth, rating)
         |
-Data layer               TArray<FCitizen>, TArray<FBuilding>, ...
+Data layer               macro stats + grid content (TArray<FBuilding>, ...)
         |                  + Data Assets / Data Tables for entity *types*
         |
-Representation layer      Instanced Static Mesh components project data -> screen
-        |                  (promote to full Actors only when needed)
+Representation layer      AgentSubsystem spawns ephemeral agents; Instanced Static
+        |                  Mesh components project data -> screen (promote to full
+        |                  Actors only when needed)
         |
 Persistence              GameInstanceSubsystem-backed save/load
 ```
@@ -82,46 +82,56 @@ in a contiguous array; per-entity *visual* is just an `FTransform` inside a
 shared instanced-mesh component. Thousands of entities require only a handful of
 UObjects (the shared mesh asset + one instancing component per type).
 
+Two kinds of rendered things follow this seam, and the difference matters:
+
+**1. Grid content (persistent — the source of truth).** Things placed on the grid
+(buildings, …) are owned by `UGridSubsystem` as plain structs and projected to
+ISM. Concrete content types are being reworked from the ground up; illustratively:
+
 ```cpp
 USTRUCT()
-struct FCitizen            // plain data, NOT a UObject
+struct FBuilding           // plain data, NOT a UObject — persistent grid content
 {
     GENERATED_BODY()
-    FVector Position;
-    int32   State;         // AtHome / Commuting / Working / ...
-    int32   HomeBuilding;
-    int32   WorkBuilding;
+    FGridCoord Tile;
+    // type/tier, footprint, ... (data-driven)
 };
 ```
 
 ```
-TArray<FCitizen>  Citizens;     // source of truth (simulation owns this)
-HISM Component    CitizenISM;   // 1 component, N instances (the projection)
+TArray<FBuilding>  Buildings;   // source of truth (UGridSubsystem owns this; saved)
+HISM Component     BuildingISM; // 1 component, N instances (the projection)
 ```
+
+**2. Ephemeral agents (projection only).** Under the macro model citizens, cars,
+and planes are **not** a source of truth. `UAgentSubsystem` spawns them *from the
+macro stats*, ages them, and recycles them in a cycle; their `TArray<FAgent>` is
+`Transient` and never saved. Same data→ISM seam — but the "data" is disposable.
 
 ### The loop
 
-1. **Simulate** — a WorldSubsystem updates `Citizens[i]` on the fixed tick.
-2. **Project** — push each citizen's transform into the ISM
-   (`UpdateInstanceTransform`), maintaining an `entity index <-> instance index`
-   map for add/remove.
+1. **Simulate** — phases update the grid + macro stats on the fixed tick.
+2. **Project** — push transforms into the ISM (`UpdateInstanceTransform`),
+   maintaining an `entity index <-> instance index` map for add/remove. Grid
+   content updates on change; agents are spawned/recycled each cycle.
 3. **Render** — the engine draws all instances in ~one draw call.
 
 ### Selection without per-entity Actors
 
 ISM per-instance line traces return the **instance index** (`FHitResult::Item`),
-which maps back to the data struct. Clicking works without Actors.
+which maps back to the data struct. Clicking *grid content* works without Actors.
+(Agents are ephemeral flavour and generally aren't selectable.)
 
 ### Per entity type
 
-| Entity   | Count      | Strategy                                                  |
-|----------|------------|----------------------------------------------------------|
-| Citizen  | thousands  | Data struct + ISM always. Never individual Actors.       |
-| Building | hundreds   | Data struct + ISM for rendering; **promote to a full Actor only while selected/interacted with.** |
+| Entity         | Count      | Strategy                                                  |
+|----------------|------------|----------------------------------------------------------|
+| Grid content   | hundreds   | Data struct + ISM. **Persistent**, owned by the grid, saved; **promote to a full Actor only while selected/interacted with.** |
+| Agent (crowd)  | thousands  | **Ephemeral** — spawned from macro stats, ISM-projected, recycled, never saved. |
 
 ### Known follow-ups (deferred)
 
-- **Animated crowds:** citizens need walk cycles. Plan to use **Vertex Animation
+- **Animated crowds:** agents need walk cycles. Plan to use **Vertex Animation
   Textures (VATs)** — baked animation played on static meshes via material — so
   crowds render through ISM at near-zero per-entity cost.
 - **Scaling to Mass Entity:** the hand-rolled `TArray + ISM` approach is the
@@ -140,8 +150,8 @@ How the simulation actually runs over time. Two rules, each with a "why".
 A **single orchestrator** advances the sim and steps each subsystem in a **fixed
 order** every tick. Subsystems do **not** tick themselves.
 
-*Why:* phases depend on each other (Economy needs the latest population; Traffic
-needs where everyone decided to go), and the game must be **deterministic** for
+*Why:* phases depend on each other (CityStats reads the finished grid; the crowd
+reflects the finished grid + stats), and the game must be **deterministic** for
 save/load. A fixed order guarantees each phase sees the *finished* output of the
 one before it. (Unreal does not guarantee tick order between subsystems, so we
 never let them self-tick.)
@@ -149,8 +159,8 @@ never let them self-tick.)
 ```
    one fixed step (repeats while the speed-scaled clock has time owed):
 
-   Time  ->  Grid  ->  Economy  ->  Population  ->  Traffic
-    \________________________________________________/
+   Time  ->  Grid  ->  CityStats  ->  Agents
+    \______________________________________/
         each phase sees the completed result of the previous one
 
    speed multiplier (pause / 1x / 2x / 3x) only changes how many
@@ -168,12 +178,12 @@ the next, then swap — so no two threads touch the same slot. No locks, no race
 and the result is identical no matter how threads are scheduled.
 
 ```
-   Population phase:
+   Agents phase (aging / positioning the crowd):
 
-   Citizens[] ──┬─► core 0 ─┐
-                ├─► core 1 ─┤
-                ├─► core 2 ─┼─► NextCitizens[] ──► swap buffers
-                └─► core 3 ─┘
+   Agents[] ──┬─► core 0 ─┐
+              ├─► core 1 ─┤
+              ├─► core 2 ─┼─► NextAgents[] ──► swap buffers
+              └─► core 3 ─┘
 ```
 
 After **all** phases finish, visuals are synced to the ISMs (§5) on the game
@@ -182,14 +192,36 @@ thread. Simulation is parallel; touching the engine stays single-threaded.
 > This is the same shape as Mass Entity (ordered processors + parallel chunks),
 > which is why moving to Mass later (§5) is an upgrade, not a rewrite.
 
+### Deferred — sim/render pipelining (perf optimization, not built)
+
+Today the orchestrator (`USimulationSubsystem`) runs the whole sim **synchronously
+on the game thread** inside its `Tick()`: every phase steps to completion before
+the frame proceeds. This is correct and simple, and is what we keep for now.
+
+A later *performance* optimization — only if the inline sim becomes a frame-time
+bottleneck — is to run tick N+1 on a worker thread while the game/render threads
+present tick N:
+
+- run the deterministic, data-only sim on a **task-graph task / worker thread**
+  instead of inline in `Tick()`;
+- **double-buffer whole snapshots** (sim writes buffer B while the game thread
+  reads the last completed buffer A), extending §6 Rule 2's per-phase buffering to
+  the whole frame;
+- the renderer **interpolates** between the two most recent sim snapshots, since
+  the sim ticks at a fixed rate (30 Hz) but frames present at display rate.
+
+The fixed timestep, pure-data phases, and clean data→visual seam are chosen so
+this is an upgrade, not a rewrite. **Not a priority — noted only so the seam is
+intentional.**
+
 ## 7. Source layout (proposed)
 
 ```
 Source/awsim/
   Core/            GameMode, GameState, GameInstance subsystem (save/load)
   Camera/          camera Pawn, PlayerController (picking/placement)
-  Simulation/      Time, Economy, Population, Grid subsystems
-  Entities/        FCitizen, FBuilding structs; representation components
+  Simulation/      Time, Grid, CityStats, Agent subsystems
+  Entities/        FAgent, FBuilding structs; representation components
   Data/            DataAsset/DataTable schema for entity types
 ```
 
