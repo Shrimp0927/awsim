@@ -21,9 +21,22 @@ public:
 
 	bool SetContent(FGridCoord Tile, FGridContent Content);
 
+	// Read access for downstream domain phases.
+	const TMap<FGridCoord, FGridContent>& GetPlacements() const { return Occupancy; }
+
+	// Buildings grouped into connected islands (by origin tile). Rebuilt lazily
+	// when placement changes; refreshed in Step (phase 200) before domains read.
+	const TArray<TArray<FGridCoord>>& GetIslands() const;
+
 private:
 	const FGridContent* FindCovering(FGridCoord Tile) const;
 
+	void EnsureIslands() const;
+	void RebuildIslands() const;
+
 	UPROPERTY()
 	TMap<FGridCoord, FGridContent> Occupancy;
+
+	mutable TArray<TArray<FGridCoord>> Islands;
+	mutable bool bIslandsDirty = true;
 };

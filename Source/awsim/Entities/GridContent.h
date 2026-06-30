@@ -64,6 +64,7 @@ public:
 	UPROPERTY(EditAnywhere) TSoftObjectPtr<UStaticMesh> Mesh;
 	UPROPERTY(EditAnywhere) TArray<FSliderDef> Sliders;
 	UPROPERTY(EditAnywhere) FIntPoint Dimensions = {1, 1}; // The width x len when facing North
+	UPROPERTY(EditAnywhere) EDomain ConnectorDomain = EDomain::None; // For Utility connectors: Energy = power line, Water = pipe
 };
 
 USTRUCT()
