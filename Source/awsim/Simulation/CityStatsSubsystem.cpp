@@ -8,5 +8,5 @@ void UCityStatsSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 void UCityStatsSubsystem::Step(float StepSeconds)
 {
-	PlayerRating = RatingFromSatisfaction(AverageSatisfaction);
+	Super::Step(StepSeconds);
 }

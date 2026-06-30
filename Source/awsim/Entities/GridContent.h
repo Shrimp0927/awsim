@@ -17,7 +17,7 @@ enum class EPlaceableType : uint8
 };
 
 UENUM()
-enum class EDirection : uint8
+enum class EPlaceableDirection : uint8
 {
 	None,
 	North,
@@ -72,6 +72,6 @@ struct FGridContent
 	GENERATED_BODY()
 
 	UPROPERTY() EPlaceableType Type = EPlaceableType::None;
-	UPROPERTY() EDirection Facing = EDirection::None;
+	UPROPERTY() EPlaceableDirection Facing = EPlaceableDirection::None;
 	UPROPERTY() TObjectPtr<UPlaceableDef> Definition;
 };

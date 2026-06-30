@@ -1,4 +1,5 @@
 #include "Simulation/GridSubsystem.h"
+#include "Entities/GridContent.h"
 
 namespace
 {
@@ -9,7 +10,7 @@ namespace
 		{
 			Dim = Content.Definition->Dimensions;
 		}
-		if (Content.Facing == EDirection::East || Content.Facing == EDirection::West)
+		if (Content.Facing == EPlaceableDirection::East || Content.Facing == EPlaceableDirection::West)
 		{
 			return FIntPoint(Dim.Y, Dim.X);
 		}
