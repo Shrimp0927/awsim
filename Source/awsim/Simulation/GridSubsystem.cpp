@@ -19,11 +19,19 @@ namespace
 		return Dim;
 	}
 
-	bool FootprintCovers(const FGridCoord& Origin, const FGridContent& Content, const FGridCoord& Tile)
+	TArray<FGridCoord> FootprintTiles(const FGridCoord& Origin, const FGridContent& Content)
 	{
-		const FIntPoint Extent = FootprintExtent(Content);
-		return Tile.X >= Origin.X && Tile.X < Origin.X + Extent.X
-			&& Tile.Y >= Origin.Y && Tile.Y < Origin.Y + Extent.Y;
+		const FIntPoint Ext = FootprintExtent(Content);
+		TArray<FGridCoord> Tiles;
+		Tiles.Reserve(Ext.X * Ext.Y);
+		for (int32 dx = 0; dx < Ext.X; ++dx)
+		{
+			for (int32 dy = 0; dy < Ext.Y; ++dy)
+			{
+				Tiles.Add(FGridCoord(Origin.X + dx, Origin.Y + dy));
+			}
+		}
+		return Tiles;
 	}
 
 	FGridCoord StepFor(EPlaceableDirection Dir)
@@ -64,9 +72,9 @@ namespace
 	}
 
 	// Scan outward from each edge tile up to ConnectorReach; a building blocks the
-	// ray, a connector of NetMap ends it (its network is recorded), empty continues.
+	// ray, a connector in NetMap ends it (its network is recorded), empty continues.
 	void ScanForNetworks(const TArray<FGridCoord>& Edge, FGridCoord Step,
-		const TMap<FGridCoord, int32>& NetMap, const TMap<FGridCoord, int32>& TileToBuilding,
+		const TMap<FGridCoord, int32>& NetMap, const TMap<FGridCoord, int32>& BuildingAt,
 		TSet<int32>& OutNets)
 	{
 		for (const FGridCoord& E : Edge)
@@ -74,7 +82,7 @@ namespace
 			for (int32 k = 1; k <= ConnectorReach; ++k)
 			{
 				const FGridCoord T(E.X + Step.X * k, E.Y + Step.Y * k);
-				if (TileToBuilding.Contains(T)) break;                  // blocked by a building
+				if (BuildingAt.Contains(T)) break;                      // blocked by a building
 				if (const int32* Net = NetMap.Find(T)) { OutNets.Add(*Net); break; }
 				// empty tile: keep scanning out to the reach limit
 			}
@@ -110,10 +118,11 @@ namespace
 		Parent[DsuFind(Parent, A)] = DsuFind(Parent, B);
 	}
 
-	// Flood-fill connector tiles of TargetType into networks (8-connectivity).
-	// For utilities, only same-domain neighbours join; OutDomains[id] records the
-	// network's domain (left empty for roads).
-	void LabelNetworks(const TMap<FGridCoord, FGridContent>& Occupancy, EPlaceableType TargetType,
+	// Flood-fill a per-type connector map into networks (8-connectivity). The map
+	// holds only one connector kind, so any neighbour in it is a candidate. For
+	// utilities, only same-domain neighbours join; OutDomains[id] records the
+	// network's domain (pass nullptr for roads).
+	void LabelNetworks(const TMap<FGridCoord, FGridContent>& Tiles,
 		TMap<FGridCoord, int32>& OutNet, TArray<EDomain>* OutDomains)
 	{
 		auto DomainOf = [](const FGridContent& C)
@@ -121,9 +130,9 @@ namespace
 			return C.Definition ? C.Definition->ConnectorDomain : EDomain::None;
 		};
 
-		for (const TPair<FGridCoord, FGridContent>& Pair : Occupancy)
+		for (const TPair<FGridCoord, FGridContent>& Pair : Tiles)
 		{
-			if (Pair.Value.Type != TargetType || OutNet.Contains(Pair.Key)) continue;
+			if (OutNet.Contains(Pair.Key)) continue;
 
 			const EDomain NetDomain = DomainOf(Pair.Value);
 			const int32 Id = OutDomains ? OutDomains->Add(NetDomain) : OutNet.Num();
@@ -143,8 +152,8 @@ namespace
 						const FGridCoord Nb(C.X + dx, C.Y + dy);
 						if (OutNet.Contains(Nb)) continue;
 
-						const FGridContent* NC = Occupancy.Find(Nb);
-						if (!NC || NC->Type != TargetType) continue;
+						const FGridContent* NC = Tiles.Find(Nb);
+						if (!NC) continue;
 						if (OutDomains && DomainOf(*NC) != NetDomain) continue; // utilities split by domain
 
 						OutNet.Add(Nb, Id);
@@ -161,54 +170,85 @@ void UGridSubsystem::Step(float StepSeconds)
 	EnsureIslands();
 }
 
-const FGridContent* UGridSubsystem::FindCovering(FGridCoord Tile) const
-{
-	if (const FGridContent* Found = Occupancy.Find(Tile))
-	{
-		if (Found->Type != EPlaceableType::None)
-		{
-			return Found;
-		}
-	}
-
-	for (const TPair<FGridCoord, FGridContent>& Pair : Occupancy)
-	{
-		if (Pair.Value.Type == EPlaceableType::None || Pair.Key == Tile)
-		{
-			continue;
-		}
-		if (FootprintCovers(Pair.Key, Pair.Value, Tile))
-		{
-			return &Pair.Value;
-		}
-	}
-
-	return nullptr;
-}
-
 bool UGridSubsystem::IsTileOccupied(FGridCoord Tile) const
 {
-	return FindCovering(Tile) != nullptr;
+	return Roads.Contains(Tile) || Utilities.Contains(Tile) || BuildingAt.Contains(Tile);
 }
 
 FGridContent UGridSubsystem::GetContentAt(FGridCoord Tile) const
 {
-	const FGridContent* Found = FindCovering(Tile);
-	return Found ? *Found : FGridContent();
+	if (const FGridContent* R = Roads.Find(Tile)) return *R;
+	if (const FGridContent* U = Utilities.Find(Tile)) return *U;
+	if (const int32* Idx = BuildingAt.Find(Tile)) return Buildings[*Idx].Content;
+	return FGridContent();
 }
 
 bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 {
 	if (Content.Type == EPlaceableType::None)
 	{
-		const bool bRemoved = Occupancy.Remove(Tile) > 0;
-		bIslandsDirty |= bRemoved;
-		return bRemoved;
+		if (Roads.Remove(Tile) > 0) { bIslandsDirty = true; return true; }
+		if (Utilities.Remove(Tile) > 0) { bIslandsDirty = true; return true; }
+		if (const int32* Idx = BuildingAt.Find(Tile))
+		{
+			RemoveBuildingAt(*Idx);
+			bIslandsDirty = true;
+			return true;
+		}
+		return false;
 	}
 
-	Occupancy.Add(Tile, Content);
+	// Reject if any tile of the new footprint is out of bounds or already occupied.
+	const TArray<FGridCoord> Tiles = FootprintTiles(Tile, Content);
+	for (const FGridCoord& T : Tiles)
+	{
+		if (!IsInBounds(T) || IsTileOccupied(T))
+		{
+			return false;
+		}
+	}
+
+	switch (Content.Type)
+	{
+	case EPlaceableType::Road:
+		Roads.Add(Tile, Content);
+		break;
+	case EPlaceableType::Utility:
+		Utilities.Add(Tile, Content);
+		break;
+	default: // Building (and any other footprint occupant)
+	{
+		FPlacedBuilding Placed;
+		Placed.Origin = Tile;
+		Placed.Content = Content;
+		const int32 Idx = Buildings.Add(MoveTemp(Placed));
+		for (const FGridCoord& T : Tiles) BuildingAt.Add(T, Idx);
+		break;
+	}
+	}
+
 	bIslandsDirty = true;
 	return true;
+}
+
+void UGridSubsystem::RemoveBuildingAt(int32 Index)
+{
+	// Drop the removed building's tiles from the reverse index.
+	for (const FGridCoord& T : FootprintTiles(Buildings[Index].Origin, Buildings[Index].Content))
+	{
+		BuildingAt.Remove(T);
+	}
+
+	Buildings.RemoveAtSwap(Index);
+
+	// RemoveAtSwap moved the last element into Index; remap its tiles.
+	if (Index < Buildings.Num())
+	{
+		for (const FGridCoord& T : FootprintTiles(Buildings[Index].Origin, Buildings[Index].Content))
+		{
+			BuildingAt[T] = Index;
+		}
+	}
 }
 
 const TArray<TArray<FGridCoord>>& UGridSubsystem::GetIslands() const
@@ -230,62 +270,35 @@ void UGridSubsystem::RebuildIslands() const
 {
 	Islands.Reset();
 
-	// 1. Collect buildings and a tile -> building index for coverage/obstruction.
-	TArray<FGridCoord> Origins;
-	TArray<const FGridContent*> Contents;
-	TMap<FGridCoord, int32> TileToBuilding;
-
-	for (const TPair<FGridCoord, FGridContent>& Pair : Occupancy)
-	{
-		if (Pair.Value.Type != EPlaceableType::Building) continue;
-
-		const int32 Idx = Origins.Add(Pair.Key);
-		Contents.Add(&Pair.Value);
-
-		const FIntPoint Ext = FootprintExtent(Pair.Value);
-		for (int32 dx = 0; dx < Ext.X; ++dx)
-		{
-			for (int32 dy = 0; dy < Ext.Y; ++dy)
-			{
-				TileToBuilding.Add(FGridCoord(Pair.Key.X + dx, Pair.Key.Y + dy), Idx);
-			}
-		}
-	}
-
-	const int32 N = Origins.Num();
+	const int32 N = Buildings.Num();
 	if (N == 0) return;
 
-	// 2. Label connector networks.
+	// 1. Label connector networks (per-type maps -> network ids).
 	TMap<FGridCoord, int32> RoadNet;
-	LabelNetworks(Occupancy, EPlaceableType::Road, RoadNet, nullptr);
+	LabelNetworks(Roads, RoadNet, nullptr);
 
 	TMap<FGridCoord, int32> UtilNet;
 	TArray<EDomain> UtilDomain;
-	LabelNetworks(Occupancy, EPlaceableType::Utility, UtilNet, &UtilDomain);
+	LabelNetworks(Utilities, UtilNet, &UtilDomain);
 	TArray<bool> UtilHasProducer;
 	UtilHasProducer.Init(false, UtilDomain.Num());
 
-	// 3. Union-Find over buildings.
+	// 2. Union-Find over buildings.
 	TArray<int32> Parent;
 	Parent.SetNum(N);
 	for (int32 i = 0; i < N; ++i) Parent[i] = i;
 
-	// (a) Proximity — Chebyshev <= 2, facing ignored.
+	// (a) Proximity — Chebyshev <= 2, facing ignored (BuildingAt is the tile index).
 	for (int32 i = 0; i < N; ++i)
 	{
-		const FIntPoint Ext = FootprintExtent(*Contents[i]);
-		for (int32 dx = 0; dx < Ext.X; ++dx)
+		for (const FGridCoord& T : FootprintTiles(Buildings[i].Origin, Buildings[i].Content))
 		{
-			for (int32 dy = 0; dy < Ext.Y; ++dy)
+			for (int32 ox = -ConnectorReach; ox <= ConnectorReach; ++ox)
 			{
-				const FGridCoord T(Origins[i].X + dx, Origins[i].Y + dy);
-				for (int32 ox = -ConnectorReach; ox <= ConnectorReach; ++ox)
+				for (int32 oy = -ConnectorReach; oy <= ConnectorReach; ++oy)
 				{
-					for (int32 oy = -ConnectorReach; oy <= ConnectorReach; ++oy)
-					{
-						const int32* J = TileToBuilding.Find(FGridCoord(T.X + ox, T.Y + oy));
-						if (J && *J != i) DsuUnion(Parent, i, *J);
-					}
+					const int32* J = BuildingAt.Find(FGridCoord(T.X + ox, T.Y + oy));
+					if (J && *J != i) DsuUnion(Parent, i, *J);
 				}
 			}
 		}
@@ -295,13 +308,13 @@ void UGridSubsystem::RebuildIslands() const
 	TMap<int32, TArray<int32>> RoadGroups;
 	for (int32 i = 0; i < N; ++i)
 	{
-		const FIntPoint Ext = FootprintExtent(*Contents[i]);
+		const FIntPoint Ext = FootprintExtent(Buildings[i].Content);
 		TArray<FGridCoord> Edge;
 		FGridCoord Step;
-		EdgeRay(Origins[i], Ext, Contents[i]->Facing, Edge, Step);
+		EdgeRay(Buildings[i].Origin, Ext, Buildings[i].Content.Facing, Edge, Step);
 
 		TSet<int32> Nets;
-		ScanForNetworks(Edge, Step, RoadNet, TileToBuilding, Nets);
+		ScanForNetworks(Edge, Step, RoadNet, BuildingAt, Nets);
 		for (int32 Net : Nets) RoadGroups.FindOrAdd(Net).Add(i);
 	}
 	for (const TPair<int32, TArray<int32>>& Group : RoadGroups)
@@ -309,7 +322,7 @@ void UGridSubsystem::RebuildIslands() const
 		for (int32 k = 1; k < Group.Value.Num(); ++k) DsuUnion(Parent, Group.Value[0], Group.Value[k]);
 	}
 
-	// (c) Utility — all four sides (facing ignored); only joins when the network
+	// (c) Utility — all four sides (facing ignored); joins only when the network
 	//     has a matching-domain producer on it.
 	const EPlaceableDirection Sides[] = {
 		EPlaceableDirection::North, EPlaceableDirection::East,
@@ -318,19 +331,19 @@ void UGridSubsystem::RebuildIslands() const
 	TMap<int32, TArray<int32>> UtilGroups;
 	for (int32 i = 0; i < N; ++i)
 	{
-		const FIntPoint Ext = FootprintExtent(*Contents[i]);
+		const FIntPoint Ext = FootprintExtent(Buildings[i].Content);
 		TSet<int32> Nets;
 		for (EPlaceableDirection Side : Sides)
 		{
 			TArray<FGridCoord> Edge;
 			FGridCoord Step;
-			EdgeRay(Origins[i], Ext, Side, Edge, Step);
-			ScanForNetworks(Edge, Step, UtilNet, TileToBuilding, Nets);
+			EdgeRay(Buildings[i].Origin, Ext, Side, Edge, Step);
+			ScanForNetworks(Edge, Step, UtilNet, BuildingAt, Nets);
 		}
 		for (int32 Net : Nets)
 		{
 			UtilGroups.FindOrAdd(Net).Add(i);
-			if (DefProducesDomain(Contents[i]->Definition, UtilDomain[Net]))
+			if (DefProducesDomain(Buildings[i].Content.Definition, UtilDomain[Net]))
 			{
 				UtilHasProducer[Net] = true;
 			}
@@ -342,7 +355,7 @@ void UGridSubsystem::RebuildIslands() const
 		for (int32 k = 1; k < Group.Value.Num(); ++k) DsuUnion(Parent, Group.Value[0], Group.Value[k]);
 	}
 
-	// 4. Gather components into islands (by building origin).
+	// 3. Gather components into islands (by building origin).
 	TMap<int32, int32> RootToIsland;
 	for (int32 i = 0; i < N; ++i)
 	{
@@ -352,6 +365,6 @@ void UGridSubsystem::RebuildIslands() const
 		{
 			IslandIdx = &RootToIsland.Add(Root, Islands.AddDefaulted());
 		}
-		Islands[*IslandIdx].Add(Origins[i]);
+		Islands[*IslandIdx].Add(Buildings[i].Origin);
 	}
 }
