@@ -187,8 +187,8 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 {
 	if (Content.Type == EPlaceableType::None)
 	{
-		if (Roads.Remove(Tile) > 0) { bIslandsDirty = true; return true; }
-		if (Utilities.Remove(Tile) > 0) { bIslandsDirty = true; return true; }
+		if (Roads.Remove(Tile) > 0) { bRoadNetDirty = true; bIslandsDirty = true; return true; }
+		if (Utilities.Remove(Tile) > 0) { bUtilNetDirty = true; bIslandsDirty = true; return true; }
 		if (const int32* Idx = BuildingAt.Find(Tile))
 		{
 			RemoveBuildingAt(*Idx);
@@ -212,9 +212,11 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 	{
 	case EPlaceableType::Road:
 		Roads.Add(Tile, Content);
+		bRoadNetDirty = true;
 		break;
 	case EPlaceableType::Utility:
 		Utilities.Add(Tile, Content);
+		bUtilNetDirty = true;
 		break;
 	default: // Building (and any other footprint occupant)
 	{
@@ -257,6 +259,23 @@ const TArray<TArray<FGridCoord>>& UGridSubsystem::GetIslands() const
 	return Islands;
 }
 
+void UGridSubsystem::EnsureNetworks() const
+{
+	if (bRoadNetDirty)
+	{
+		RoadNet.Reset();
+		LabelNetworks(Roads, RoadNet, nullptr);
+		bRoadNetDirty = false;
+	}
+	if (bUtilNetDirty)
+	{
+		UtilNet.Reset();
+		UtilDomain.Reset();
+		LabelNetworks(Utilities, UtilNet, &UtilDomain);
+		bUtilNetDirty = false;
+	}
+}
+
 void UGridSubsystem::EnsureIslands() const
 {
 	if (bIslandsDirty)
@@ -273,13 +292,9 @@ void UGridSubsystem::RebuildIslands() const
 	const int32 N = Buildings.Num();
 	if (N == 0) return;
 
-	// 1. Label connector networks (per-type maps -> network ids).
-	TMap<FGridCoord, int32> RoadNet;
-	LabelNetworks(Roads, RoadNet, nullptr);
-
-	TMap<FGridCoord, int32> UtilNet;
-	TArray<EDomain> UtilDomain;
-	LabelNetworks(Utilities, UtilNet, &UtilDomain);
+	// 1. Connector networks — cached; only re-labelled when connectors change.
+	//    (Producer flags below depend on buildings, so they are NOT cached.)
+	EnsureNetworks();
 	TArray<bool> UtilHasProducer;
 	UtilHasProducer.Init(false, UtilDomain.Num());
 

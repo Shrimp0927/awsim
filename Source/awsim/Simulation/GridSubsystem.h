@@ -47,6 +47,7 @@ public:
 	const TArray<TArray<FGridCoord>>& GetIslands() const;
 
 private:
+	void EnsureNetworks() const;
 	void EnsureIslands() const;
 	void RebuildIslands() const;
 	void RemoveBuildingAt(int32 Index);
@@ -63,6 +64,15 @@ private:
 	// Reverse index: every covered tile -> index into Buildings. Derived from
 	// Buildings; maintained on placement so coverage queries stay O(1).
 	TMap<FGridCoord, int32> BuildingAt;
+
+	// Cached connector networks (tile -> network id). Re-labelled only when the
+	// matching connector type changes; UtilDomain[id] is each utility network's
+	// domain. Building-only placements reuse these untouched.
+	mutable TMap<FGridCoord, int32> RoadNet;
+	mutable TMap<FGridCoord, int32> UtilNet;
+	mutable TArray<EDomain> UtilDomain;
+	mutable bool bRoadNetDirty = true;
+	mutable bool bUtilNetDirty = true;
 
 	mutable TArray<TArray<FGridCoord>> Islands;
 	mutable bool bIslandsDirty = true;

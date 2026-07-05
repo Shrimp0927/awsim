@@ -12,7 +12,7 @@ class AWSIM_API UCityStatsSubsystem : public USimPhase
 public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Step(float StepSeconds) override;
-	virtual int32 PhaseOrder() const override { return 800; }
+	virtual int32 PhaseOrder() const override { return 899; }
 
 	int32 GetPopulation() const { return Population; }
 	float GetPlayerRating() const { return PlayerRating; }
