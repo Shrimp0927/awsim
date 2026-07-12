@@ -3,10 +3,6 @@
 #include "GameSimulationSubsystem.h"
 #include "Engine/World.h"
 
-namespace
-{
-	constexpr EDomain Domain = EDomain::Energy; // DomainAmount/DefHasDomain are shared (GridContent.h)
-}
 
 void UEnergySubsystem::Step(float StepSeconds)
 {
@@ -50,7 +46,7 @@ void UEnergySubsystem::Recompute(const UGridSubsystem& GridSubsystem)
 		float IslandConsumption = 0.f;
 		for (const FGridCoord& Origin : Island)
 		{
-			const float Amount = DomainAmount(GridSubsystem.GetContentAt(Origin), Domain);
+			const float Amount = DomainAmount(GridSubsystem.GetContentAt(Origin), EDomain::Energy);
 			if (Amount > 0.f) IslandCapacity += Amount;
 			else IslandConsumption += -Amount;
 		}
@@ -68,7 +64,7 @@ void UEnergySubsystem::Recompute(const UGridSubsystem& GridSubsystem)
 
 	for (const FPlacedBuilding& Building : GridSubsystem.GetBuildings())
 	{
-		if (DefHasDomain(Building.Content.Definition, Domain))
+		if (DefHasDomain(Building.Content.Definition, EDomain::Energy))
 		{
 			MaintenanceCost += Building.Content.Definition->DailyMaintenanceCost;
 		}
