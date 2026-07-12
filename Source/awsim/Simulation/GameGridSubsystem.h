@@ -1,10 +1,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Simulation/SimPhase.h"
+#include "Simulation/GameSimPhase.h"
 #include "Entities/GridCoord.h"
 #include "Entities/GridContent.h"
-#include "GridSubsystem.generated.h"
+#include "GameGridSubsystem.generated.h"
+
+class UGamePlayerFundsSubsystem;
 
 USTRUCT()
 struct FPlacedBuilding
@@ -39,6 +41,23 @@ public:
 	FGridContent GetContentAt(FGridCoord Tile) const;
 	bool SetContent(FGridCoord Tile, FGridContent Content);
 
+	// Player-intent entry point: placements queue here and apply FIFO at the
+	// top of the grid phase, so a placement queued during tick N is live for
+	// every domain phase of tick N+1. SetContent stays the immediate,
+	// authoritative mutator (validation + charging happen there, at apply time).
+	void QueuePlacement(FGridCoord Tile, FGridContent Content);
+	int32 NumPendingPlacements() const { return PendingPlacements.Num(); }
+
+	// Writes one placed building's per-instance slider value, clamped to the
+	// slider's authored range. False if no building covers Tile or the index
+	// is invalid. Never reshapes islands (producer checks are type-level).
+	bool SetSliderValue(FGridCoord Tile, int32 SliderIndex, float Value);
+
+	// Funds source for placement charging: an item's Cost is paid on placement,
+	// and an unaffordable item is rejected. Resolved from the owning world when
+	// unset; injectable so world-less specs can drive affordability.
+	void SetFunds(UGamePlayerFundsSubsystem* InFunds) { Funds = InFunds; }
+
 	// Read access for downstream domain phases.
 	const TArray<FPlacedBuilding>& GetBuildings() const { return Buildings; }
 
@@ -51,6 +70,10 @@ private:
 	void EnsureIslands() const;
 	void RebuildIslands() const;
 	void RemoveBuildingAt(int32 Index);
+	UGamePlayerFundsSubsystem* ResolveFunds() const;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UGamePlayerFundsSubsystem> Funds;
 
 	UPROPERTY()
 	TMap<FGridCoord, FGridContent> Roads;
@@ -60,6 +83,11 @@ private:
 
 	UPROPERTY()
 	TArray<FPlacedBuilding> Buildings;
+
+	// Queued player placements, drained FIFO by Step. Ephemeral player intent,
+	// not authoritative state.
+	UPROPERTY(Transient)
+	TArray<FPlacedBuilding> PendingPlacements;
 
 	// Reverse index: every covered tile -> index into Buildings. Derived from
 	// Buildings; maintained on placement so coverage queries stay O(1).

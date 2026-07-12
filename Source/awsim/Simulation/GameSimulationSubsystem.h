@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Tickable.h"
-#include "SimulationSubsystem.generated.h"
+#include "GameSimulationSubsystem.generated.h"
 
 class USimPhase;
 

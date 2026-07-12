@@ -1,0 +1,27 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Subsystems/WorldSubsystem.h"
+#include "GamePlayerFundsSubsystem.generated.h"
+
+// The player's treasury. Authoritative saved state, NOT a sim
+// phase: it never steps on the clock. Mutated by events only — the Economy
+// phase deposits taxes; placement/upkeep spend from it.
+UCLASS()
+class AWSIM_API UGamePlayerFundsSubsystem : public UWorldSubsystem
+{
+	GENERATED_BODY()
+
+public:
+	float GetBalance() const { return Balance; }
+
+	bool CanAfford(float Cost) const { return Cost <= Balance; }
+
+	// Deducts Cost if affordable; returns whether the spend happened.
+	bool TrySpend(float Cost, bool Override = false);
+
+	void Deposit(float Amount);
+
+private:
+	UPROPERTY() float Balance = 0.f;
+};

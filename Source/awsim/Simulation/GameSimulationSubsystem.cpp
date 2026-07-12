@@ -1,5 +1,6 @@
-#include "Simulation/SimulationSubsystem.h"
-#include "Simulation/SimPhase.h"
+#include "Simulation/GameSimulationSubsystem.h"
+#include "Simulation/GameSimPhase.h"
+#include "Simulation/GamePlayerFundsSubsystem.h"
 #include "awsim.h"
 #include "Engine/World.h"
 
@@ -68,6 +69,16 @@ void USimulationSubsystem::StepOnce()
 		if (Phase)
 		{
 			Phase->Step(FixedStep);
+		}
+	}
+
+	// End-of-step money phase: deposits queued by phases land at once, so a
+	// tick is subtraction first, then one synchronized addition.
+	if (UWorld* World = GetWorld())
+	{
+		if (UGamePlayerFundsSubsystem* Funds = World->GetSubsystem<UGamePlayerFundsSubsystem>())
+		{
+			Funds->CommitDeposits();
 		}
 	}
 

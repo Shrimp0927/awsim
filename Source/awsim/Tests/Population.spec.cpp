@@ -1,86 +1,239 @@
 #include "Misc/AutomationTest.h"
+#include "Simulation/GameGridSubsystem.h"
+#include "Simulation/GameEnergySubsystem.h"
+#include "Simulation/GameWaterSubsystem.h"
+#include "Simulation/GameHousingSubsystem.h"
+#include "Simulation/GameEconomySubsystem.h"
+#include "Simulation/GamePopulationSubsystem.h"
+#include "Entities/GridContent.h"
+#include "UObject/StrongObjectPtr.h"
 
-// BEHAVIOUR SPEC — written BEFORE implementation (BDD-first). It() names are the
-// contract; bodies are PENDING stubs sketching the intended API in comments.
-//
-// Population is its OWN domain subsystem (not part of CityStats): a single macro
-// QUANTITY with growth dynamics, fed by several domains. It is cross-domain —
-// Housing sets capacity, Energy/Water service gate it (per island), and it then
-// feeds Economy (workforce) and the agent crowd. Runs mid-pipeline (~order 600):
-// after Housing/Energy/Water, before Economy.
-//
-// Circular dependency (utility demand depends on population, population depends on
-// service) is resolved by a ONE-TICK LAG: population reads the PREVIOUS tick's
-// serviced capacity. Fixed phase order keeps this deterministic.
+// Live spec for the Population domain phase: a macro quantity that grows
+// toward the SERVICED housing capacity (islands with both energy and water),
+// at a speed the economy boosts. The full pipeline is wired via injection and
+// stepped in orchestrator order (Grid 200 -> Energy 201 -> Water 202 ->
+// Housing 203 -> Economy 204 -> Population 600), so each phase reads state
+// settled earlier in the same tick — deterministic by fixed phase order.
 
 #if WITH_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FPopulationSpec, "awsim.Simulation.Population",
 	EAutomationTestFlags::ProductFilter | EAutomationTestFlags_ApplicationContextMask)
+
+	TStrongObjectPtr<UGridSubsystem> Grid;
+	TStrongObjectPtr<UEnergySubsystem> Energy;
+	TStrongObjectPtr<UGameWaterSubsystem> Water;
+	TStrongObjectPtr<UHousingSubsystem> Housing;
+	TStrongObjectPtr<UEconomySubsystem> Economy;
+	TStrongObjectPtr<UPopulationSubsystem> Population;
+
+	UPlaceableDef* MakeBuildingDef(const TArray<TPair<EDomain, float>>& Effects)
+	{
+		UPlaceableDef* Def = NewObject<UPlaceableDef>();
+		Def->Type = EPlaceableType::Building;
+		Def->Dimensions = FIntPoint(1, 1);
+		FSliderDef Slider;
+		for (const TPair<EDomain, float>& E : Effects)
+		{
+			FDomainEffect Effect;
+			Effect.Domain = E.Key;
+			Effect.AmountAtMin = E.Value;
+			Effect.AmountAtMax = E.Value;
+			Slider.Effects.Add(Effect);
+		}
+		Def->Sliders.Add(Slider);
+		return Def;
+	}
+
+	UPlaceableDef* HomeDef(float HousingAmount) { return MakeBuildingDef({{EDomain::Housing, HousingAmount}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}); }
+	UPlaceableDef* PowerDef()      { return MakeBuildingDef({{EDomain::Energy, 100.f}}); }
+	UPlaceableDef* WaterPlantDef() { return MakeBuildingDef({{EDomain::Water, 100.f}}); }
+
+	void Place(FGridCoord At, UPlaceableDef* Def)
+	{
+		FGridContent Content;
+		Content.Type = EPlaceableType::Building;
+		Content.Facing = EPlaceableDirection::North;
+		Content.Definition = Def;
+		Grid->SetContent(At, Content);
+	}
+
+	// A fully serviced island: one home + both plants, clustered at Origin.
+	void PlaceServicedCluster(FGridCoord Origin, float HousingAmount)
+	{
+		Place(Origin, HomeDef(HousingAmount));
+		Place(FGridCoord(Origin.X + 1, Origin.Y), PowerDef());
+		Place(FGridCoord(Origin.X + 2, Origin.Y), WaterPlantDef());
+	}
+
+	void StepAll(float Dt)
+	{
+		Grid->Step(Dt);
+		Energy->Step(Dt);
+		Water->Step(Dt);
+		Housing->Step(Dt);
+		Economy->Step(Dt);
+		Population->Step(Dt);
+	}
+
 END_DEFINE_SPEC(FPopulationSpec)
 
 void FPopulationSpec::Define()
 {
+	BeforeEach([this]()
+	{
+		Grid = TStrongObjectPtr<UGridSubsystem>(NewObject<UGridSubsystem>());
+		Energy = TStrongObjectPtr<UEnergySubsystem>(NewObject<UEnergySubsystem>());
+		Water = TStrongObjectPtr<UGameWaterSubsystem>(NewObject<UGameWaterSubsystem>());
+		Housing = TStrongObjectPtr<UHousingSubsystem>(NewObject<UHousingSubsystem>());
+		Economy = TStrongObjectPtr<UEconomySubsystem>(NewObject<UEconomySubsystem>());
+		Population = TStrongObjectPtr<UPopulationSubsystem>(NewObject<UPopulationSubsystem>());
+		Energy->SetGrid(Grid.Get());
+		Water->SetGrid(Grid.Get());
+		Housing->SetGrid(Grid.Get());
+		Housing->SetEnergy(Energy.Get());
+		Housing->SetWater(Water.Get());
+		Economy->SetGrid(Grid.Get());
+		Economy->SetEnergy(Energy.Get());
+		Population->SetHousing(Housing.Get());
+		Population->SetEconomy(Economy.Get());
+	});
+	AfterEach([this]()
+	{
+		Population.Reset(); Economy.Reset(); Housing.Reset();
+		Water.Reset(); Energy.Reset(); Grid.Reset();
+	});
+
 	Describe("Starting state", [this]()
 	{
 		It("starts at the seed population", [this]()
 		{
-			// expect: Population->GetCount() == <seed>   (ASSUMPTION: seed TBD; was 100)
+			TestEqual(TEXT("seed"), Population->GetCount(), 100);
 		});
 	});
 
 	Describe("Capacity — bounded by serviced housing", [this]()
 	{
-		// "Effective capacity" = housing capacity on islands that have BOTH energy
-		// and water service. Unserviced homes do not hold people.
+		It("never exceeds total housing capacity", [this]()
+		{
+			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
+			for (int32 i = 0; i < 200; ++i) StepAll(1.f);
+			TestTrue(TEXT("approached capacity"), Population->GetCount() > 190);
+			TestTrue(TEXT("never exceeded it"), Population->GetCount() <= 200);
+		});
 
-		It("never exceeds total housing capacity", [this]() {});
+		It("counts a home toward capacity only when its island has energy AND water", [this]()
+		{
+			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
+			StepAll(1.f);
+			TestTrue(TEXT("grows toward the serviced home"), Population->GetCount() > 100);
+		});
 
-		It("counts a home toward capacity only when its island has energy AND water", [this]() {});
+		It("excludes housing on an island missing energy", [this]()
+		{
+			Place(FGridCoord(5, 5), HomeDef(200.f));
+			Place(FGridCoord(6, 5), WaterPlantDef()); // water only
+			StepAll(1.f);
+			TestTrue(TEXT("unserviced home holds nobody — declines"), Population->GetCount() < 100);
+		});
 
-		It("excludes housing on an island missing energy", [this]() {});
+		It("excludes housing on an island missing water", [this]()
+		{
+			Place(FGridCoord(5, 5), HomeDef(200.f));
+			Place(FGridCoord(6, 5), PowerDef()); // power only
+			StepAll(1.f);
+			TestTrue(TEXT("unserviced home holds nobody — declines"), Population->GetCount() < 100);
+		});
 
-		It("excludes housing on an island missing water", [this]() {});
-
-		It("treats two serviced islands' housing as additive capacity", [this]() {});
+		It("treats two serviced islands' housing as additive capacity", [this]()
+		{
+			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
+			PlaceServicedCluster(FGridCoord(50, 50), 200.f);
+			for (int32 i = 0; i < 200; ++i) StepAll(1.f);
+			TestTrue(TEXT("approaches the sum of both islands"), Population->GetCount() > 350);
+		});
 	});
 
 	Describe("Growth dynamics — moves toward effective capacity over time", [this]()
 	{
 		It("grows toward effective capacity rather than jumping instantly", [this]()
 		{
-			// expect: after one step, count moves PART-way toward capacity, not all
+			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
+			StepAll(1.f);
+			TestTrue(TEXT("moved up"), Population->GetCount() > 100);
+			TestTrue(TEXT("only PART-way"), Population->GetCount() < 200);
 		});
 
 		It("declines when effective capacity drops below the current count", [this]()
 		{
-			// e.g. a blackout unservices an island -> its capacity vanishes ->
-			// population trends downward
+			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
+			for (int32 i = 0; i < 10; ++i) StepAll(1.f);
+			const int32 Before = Population->GetCount();
+			TestTrue(TEXT("grew first"), Before > 100);
+
+			// Blackout: remove the power plant -> island unserviced -> capacity gone.
+			Grid->SetContent(FGridCoord(6, 5), FGridContent());
+			StepAll(1.f);
+			TestTrue(TEXT("trending down"), Population->GetCount() < Before);
 		});
 
-		It("holds steady when count already equals effective capacity", [this]() {});
+		It("holds steady when count already equals effective capacity", [this]()
+		{
+			PlaceServicedCluster(FGridCoord(5, 5), 100.f); // capacity == seed
+			StepAll(1.f);
+			TestEqual(TEXT("steady"), Population->GetCount(), 100);
+		});
 
-		It("trends toward zero when there is no serviced housing", [this]() {});
+		It("trends toward zero when there is no serviced housing", [this]()
+		{
+			for (int32 i = 0; i < 60; ++i) StepAll(1.f);
+			TestTrue(TEXT("nearly empty"), Population->GetCount() < 5);
+		});
 
-		It("stays non-negative", [this]() {});
+		It("stays non-negative", [this]()
+		{
+			for (int32 i = 0; i < 300; ++i) StepAll(1.f);
+			TestTrue(TEXT("never below zero"), Population->GetCount() >= 0);
+		});
 	});
 
-	Describe("One-tick lag on the demand feedback loop", [this]()
+	Describe("Economy influence", [this]()
 	{
-		It("computes this tick's growth from the PREVIOUS tick's serviced capacity", [this]()
+		It("grows faster when the economy is producing", [this]()
 		{
-			// guards the circular dep (population <-> utility demand). Confirms the
-			// result is deterministic regardless of intra-tick ordering races.
+			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
+			StepAll(1.f);
+			const float C1 = static_cast<float>(Population->GetCount());
+			const float FractionNoGDP = (C1 - 100.f) / (200.f - 100.f);
+
+			// A big powered business maxes the GDP boost (2x growth speed).
+			Place(FGridCoord(6, 6), MakeBuildingDef({{EDomain::Economy, 2000.f}}));
+			StepAll(1.f);
+			const float C2 = static_cast<float>(Population->GetCount());
+			const float FractionWithGDP = (C2 - C1) / (200.f - C1);
+
+			TestTrue(TEXT("gap closes faster with GDP"), FractionWithGDP > FractionNoGDP * 1.5f);
+		});
+	});
+
+	Describe("Deterministic pipeline", [this]()
+	{
+		It("reads capacity produced by phases that run earlier in the same tick (fixed order)", [this]()
+		{
+			TestTrue(TEXT("energy before housing"), Energy->PhaseOrder() < Housing->PhaseOrder());
+			TestTrue(TEXT("water before housing"), Water->PhaseOrder() < Housing->PhaseOrder());
+			TestTrue(TEXT("housing before economy"), Housing->PhaseOrder() < Economy->PhaseOrder());
+			TestTrue(TEXT("economy before population"), Economy->PhaseOrder() < Population->PhaseOrder());
 		});
 	});
 
 	Describe("Feeds downstream consumers", [this]()
 	{
-		It("exposes a count the Economy phase reads as workforce/consumers", [this]() {});
-
-		It("exposes a count the agent crowd scales its visible agents from", [this]()
+		It("exposes an integer count for CityStats to aggregate and the agent crowd to scale from", [this]()
 		{
-			// UAgentSubsystem already derives DesiredAgentCount from population.
+			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
+			StepAll(1.f);
+			TestTrue(TEXT("count is exposed and sane"), Population->GetCount() > 0);
 		});
 	});
 }

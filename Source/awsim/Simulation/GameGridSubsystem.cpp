@@ -1,5 +1,7 @@
-#include "Simulation/GridSubsystem.h"
+#include "Simulation/GameGridSubsystem.h"
+#include "Simulation/GamePlayerFundsSubsystem.h"
 #include "Entities/GridContent.h"
+#include "Engine/World.h"
 
 namespace
 {
@@ -167,7 +169,42 @@ namespace
 
 void UGridSubsystem::Step(float StepSeconds)
 {
+	// Apply queued placements first so this tick's domain phases read a
+	// settled grid. Invalid/unaffordable placements are dropped here.
+	for (FPlacedBuilding& Pending : PendingPlacements)
+	{
+		SetContent(Pending.Origin, MoveTemp(Pending.Content));
+	}
+	PendingPlacements.Reset();
+
 	EnsureIslands();
+}
+
+void UGridSubsystem::QueuePlacement(FGridCoord Tile, FGridContent Content)
+{
+	FPlacedBuilding Pending;
+	Pending.Origin = Tile;
+	Pending.Content = MoveTemp(Content);
+	PendingPlacements.Add(MoveTemp(Pending));
+}
+
+bool UGridSubsystem::SetSliderValue(FGridCoord Tile, int32 SliderIndex, float Value)
+{
+	const int32* Idx = BuildingAt.Find(Tile);
+	if (!Idx)
+	{
+		return false;
+	}
+
+	FGridContent& Content = Buildings[*Idx].Content;
+	if (!Content.Definition || !Content.SliderValues.IsValidIndex(SliderIndex))
+	{
+		return false;
+	}
+
+	const FFloatInterval& Range = Content.Definition->Sliders[SliderIndex].Range;
+	Content.SliderValues[SliderIndex] = FMath::Clamp(Value, Range.Min, Range.Max);
+	return true;
 }
 
 bool UGridSubsystem::IsTileOccupied(FGridCoord Tile) const
@@ -205,6 +242,29 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 		if (!IsInBounds(T) || IsTileOccupied(T))
 		{
 			return false;
+		}
+	}
+
+	// Charge the item's cost last, once placement is otherwise valid, so a
+	// rejected placement never spends. Unaffordable -> rejected.
+	const float Cost = Content.Definition ? Content.Definition->Cost : 0.f;
+	if (Cost > 0.f)
+	{
+		UGamePlayerFundsSubsystem* PlayerFunds = ResolveFunds();
+		if (!PlayerFunds || !PlayerFunds->TrySpend(Cost))
+		{
+			return false;
+		}
+	}
+
+	// Seed per-instance slider values from the def's authored defaults unless
+	// the caller supplied a full set.
+	if (Content.Definition && Content.SliderValues.Num() != Content.Definition->Sliders.Num())
+	{
+		Content.SliderValues.Reset(Content.Definition->Sliders.Num());
+		for (const FSliderDef& Slider : Content.Definition->Sliders)
+		{
+			Content.SliderValues.Add(Slider.Value);
 		}
 	}
 
@@ -251,6 +311,16 @@ void UGridSubsystem::RemoveBuildingAt(int32 Index)
 			BuildingAt[T] = Index;
 		}
 	}
+}
+
+UGamePlayerFundsSubsystem* UGridSubsystem::ResolveFunds() const
+{
+	if (Funds)
+	{
+		return Funds;
+	}
+	UWorld* World = GetWorld();
+	return World ? World->GetSubsystem<UGamePlayerFundsSubsystem>() : nullptr;
 }
 
 const TArray<TArray<FGridCoord>>& UGridSubsystem::GetIslands() const

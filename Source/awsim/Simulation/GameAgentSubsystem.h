@@ -1,9 +1,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Simulation/SimPhase.h"
+#include "Simulation/GameSimPhase.h"
 #include "Entities/Agent.h"
-#include "AgentSubsystem.generated.h"
+#include "GameAgentSubsystem.generated.h"
 
 UCLASS()
 class AWSIM_API UAgentSubsystem : public USimPhase

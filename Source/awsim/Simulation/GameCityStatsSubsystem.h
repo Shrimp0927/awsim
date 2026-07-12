@@ -1,8 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Simulation/SimPhase.h"
-#include "CityStatsSubsystem.generated.h"
+#include "Simulation/GameSimPhase.h"
+#include "GameCityStatsSubsystem.generated.h"
 
 UCLASS()
 class AWSIM_API UCityStatsSubsystem : public USimPhase

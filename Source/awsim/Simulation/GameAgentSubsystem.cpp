@@ -1,5 +1,5 @@
-#include "Simulation/AgentSubsystem.h"
-#include "Simulation/CityStatsSubsystem.h"
+#include "Simulation/GameAgentSubsystem.h"
+#include "Simulation/GameCityStatsSubsystem.h"
 #include "Engine/World.h"
 
 void UAgentSubsystem::Step(float StepSeconds)

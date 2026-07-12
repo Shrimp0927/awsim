@@ -1,12 +1,14 @@
 #include "Misc/AutomationTest.h"
-#include "Simulation/GridSubsystem.h"
+#include "Simulation/GameGridSubsystem.h"
+#include "Simulation/GamePlayerFundsSubsystem.h"
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
 // Live spec for the GridSubsystem features that exist today: bounds, placement
-// (footprint-aware), occupancy, and connected-island detection (proximity, road,
-// utility with producer gate). Placement/island logic never calls GetWorld(), so
-// a plain NewObject'd subsystem can be driven directly.
+// (footprint-aware, funds-gated), occupancy, and connected-island detection
+// (proximity, road, utility with producer gate). Placement/island logic never
+// calls GetWorld() when funds are injected via SetFunds, so a plain NewObject'd
+// subsystem can be driven directly.
 // (On UE < 5.5 the mask is EAutomationTestFlags::ApplicationContextMask.)
 
 #if WITH_AUTOMATION_TESTS
@@ -15,6 +17,7 @@ BEGIN_DEFINE_SPEC(FGridSpec, "awsim.Simulation.Grid",
 	EAutomationTestFlags::ProductFilter | EAutomationTestFlags_ApplicationContextMask)
 
 	TStrongObjectPtr<UGridSubsystem> Grid;
+	TStrongObjectPtr<UGamePlayerFundsSubsystem> PlayerFunds;
 
 	UPlaceableDef* MakeDef(EPlaceableType Type, FIntPoint Dims, EDomain ConnectorDomain)
 	{
@@ -22,6 +25,14 @@ BEGIN_DEFINE_SPEC(FGridSpec, "awsim.Simulation.Grid",
 		Def->Type = Type;
 		Def->Dimensions = Dims;
 		Def->ConnectorDomain = ConnectorDomain;
+		return Def;
+	}
+
+	// A 1x1 building def with a placement price.
+	UPlaceableDef* MakeCostedDef(float Cost)
+	{
+		UPlaceableDef* Def = MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None);
+		Def->Cost = Cost;
 		return Def;
 	}
 
@@ -128,6 +139,134 @@ void FGridSpec::Define()
 			PlaceBuilding(FGridCoord(5, 5));
 			TestTrue(TEXT("removed"), Grid->SetContent(FGridCoord(5, 5), FGridContent()));
 			TestFalse(TEXT("free"), Grid->IsTileOccupied(FGridCoord(5, 5)));
+		});
+	});
+
+	Describe("Placement queue — player intent applies when the grid phase steps", [this]()
+	{
+		It("does not occupy the tile until the grid steps", [this]()
+		{
+			Grid->QueuePlacement(FGridCoord(5, 5), MakeContent(EPlaceableType::Building, MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None), EPlaceableDirection::North));
+			TestFalse(TEXT("queued, not applied"), Grid->IsTileOccupied(FGridCoord(5, 5)));
+			TestEqual(TEXT("one pending"), Grid->NumPendingPlacements(), 1);
+
+			Grid->Step(0.f);
+			TestTrue(TEXT("applied"), Grid->IsTileOccupied(FGridCoord(5, 5)));
+			TestEqual(TEXT("queue drained"), Grid->NumPendingPlacements(), 0);
+		});
+
+		It("applies queued placements FIFO — the first to claim a tile wins", [this]()
+		{
+			Grid->QueuePlacement(FGridCoord(3, 3), MakeContent(EPlaceableType::Road, MakeDef(EPlaceableType::Road, FIntPoint(1, 1), EDomain::None), EPlaceableDirection::None));
+			Grid->QueuePlacement(FGridCoord(3, 3), MakeContent(EPlaceableType::Building, MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None), EPlaceableDirection::North));
+
+			Grid->Step(0.f);
+			TestTrue(TEXT("road won the tile"), Grid->GetContentAt(FGridCoord(3, 3)).Type == EPlaceableType::Road);
+		});
+
+		It("charges funds when the placement is processed, not when queued", [this]()
+		{
+			PlayerFunds = TStrongObjectPtr<UGamePlayerFundsSubsystem>(NewObject<UGamePlayerFundsSubsystem>());
+			PlayerFunds->Deposit(100.f);
+			PlayerFunds->CommitDeposits();
+			Grid->SetFunds(PlayerFunds.Get());
+
+			Grid->QueuePlacement(FGridCoord(5, 5), MakeContent(EPlaceableType::Building, MakeCostedDef(30.f), EPlaceableDirection::North));
+			TestEqual(TEXT("not charged while queued"), PlayerFunds->GetBalance(), 100.f);
+
+			Grid->Step(0.f);
+			TestEqual(TEXT("charged at apply"), PlayerFunds->GetBalance(), 70.f);
+			PlayerFunds.Reset();
+		});
+	});
+
+	Describe("Per-instance slider values", [this]()
+	{
+		It("seeds instance values from the def's authored defaults on placement", [this]()
+		{
+			PlaceBuilding(FGridCoord(5, 5), EPlaceableDirection::North, MakeProducerDef(EDomain::Energy));
+			const FGridContent Content = Grid->GetContentAt(FGridCoord(5, 5));
+			TestEqual(TEXT("one value per slider"), Content.SliderValues.Num(), 1);
+			TestEqual(TEXT("seeded from authored default"), Content.SliderValues[0], 0.5f);
+		});
+
+		It("keeps a caller-supplied full set of values", [this]()
+		{
+			FGridContent Content = MakeContent(EPlaceableType::Building, MakeProducerDef(EDomain::Energy), EPlaceableDirection::North);
+			Content.SliderValues = { 1.f };
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(5, 5), Content));
+			TestEqual(TEXT("supplied value kept"), Grid->GetContentAt(FGridCoord(5, 5)).SliderValues[0], 1.f);
+		});
+
+		It("SetSliderValue writes the instance value, clamped to the slider's range", [this]()
+		{
+			PlaceBuilding(FGridCoord(5, 5), EPlaceableDirection::North, MakeProducerDef(EDomain::Energy));
+
+			TestTrue(TEXT("written"), Grid->SetSliderValue(FGridCoord(5, 5), 0, 0.9f));
+			TestEqual(TEXT("value"), Grid->GetContentAt(FGridCoord(5, 5)).SliderValues[0], 0.9f);
+
+			TestTrue(TEXT("written (out of range)"), Grid->SetSliderValue(FGridCoord(5, 5), 0, 5.f));
+			TestEqual(TEXT("clamped to range max"), Grid->GetContentAt(FGridCoord(5, 5)).SliderValues[0], 1.f);
+		});
+
+		It("rejects a slider write to an empty tile or an invalid index", [this]()
+		{
+			TestFalse(TEXT("empty tile"), Grid->SetSliderValue(FGridCoord(40, 40), 0, 0.5f));
+
+			PlaceBuilding(FGridCoord(5, 5)); // def with no sliders
+			TestFalse(TEXT("no such slider"), Grid->SetSliderValue(FGridCoord(5, 5), 0, 0.5f));
+		});
+	});
+
+	Describe("Placement — affordability (player funds)", [this]()
+	{
+		BeforeEach([this]()
+		{
+			PlayerFunds = TStrongObjectPtr<UGamePlayerFundsSubsystem>(NewObject<UGamePlayerFundsSubsystem>());
+			PlayerFunds->Deposit(100.f);
+			PlayerFunds->CommitDeposits(); // deposits buffer until end-of-step
+			Grid->SetFunds(PlayerFunds.Get());
+		});
+		AfterEach([this]() { PlayerFunds.Reset(); });
+
+		It("charges the item's cost on successful placement", [this]()
+		{
+			TestTrue(TEXT("placed"), PlaceBuilding(FGridCoord(5, 5), EPlaceableDirection::North, MakeCostedDef(30.f)));
+			TestEqual(TEXT("balance charged"), PlayerFunds->GetBalance(), 70.f);
+		});
+
+		It("rejects an item the player cannot afford, leaving the tile free and the balance untouched", [this]()
+		{
+			TestFalse(TEXT("rejected"), PlaceBuilding(FGridCoord(5, 5), EPlaceableDirection::North, MakeCostedDef(150.f)));
+			TestFalse(TEXT("tile free"), Grid->IsTileOccupied(FGridCoord(5, 5)));
+			TestEqual(TEXT("balance untouched"), PlayerFunds->GetBalance(), 100.f);
+		});
+
+		It("allows spending the balance down to exactly zero", [this]()
+		{
+			TestTrue(TEXT("placed"), PlaceBuilding(FGridCoord(5, 5), EPlaceableDirection::North, MakeCostedDef(100.f)));
+			TestEqual(TEXT("balance empty"), PlayerFunds->GetBalance(), 0.f);
+		});
+
+		It("does not charge when placement fails for another reason (occupied tile)", [this]()
+		{
+			TestTrue(TEXT("first"), PlaceBuilding(FGridCoord(5, 5)));
+			TestFalse(TEXT("overlap rejected"), PlaceBuilding(FGridCoord(5, 5), EPlaceableDirection::North, MakeCostedDef(30.f)));
+			TestEqual(TEXT("balance untouched"), PlayerFunds->GetBalance(), 100.f);
+		});
+
+		It("places zero-cost items without touching the balance", [this]()
+		{
+			TestTrue(TEXT("placed"), PlaceBuilding(FGridCoord(5, 5)));
+			TestEqual(TEXT("balance untouched"), PlayerFunds->GetBalance(), 100.f);
+		});
+
+		It("charges connectors (roads, utilities) too", [this]()
+		{
+			UPlaceableDef* RoadDef = MakeDef(EPlaceableType::Road, FIntPoint(1, 1), EDomain::None);
+			RoadDef->Cost = 10.f;
+			TestTrue(TEXT("road placed"), Grid->SetContent(FGridCoord(3, 3), MakeContent(EPlaceableType::Road, RoadDef, EPlaceableDirection::None)));
+			TestEqual(TEXT("balance charged"), PlayerFunds->GetBalance(), 90.f);
 		});
 	});
 

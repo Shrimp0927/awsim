@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "SimPhase.generated.h"
+#include "GameSimPhase.generated.h"
 
 UCLASS(Abstract)
 class AWSIM_API USimPhase : public UWorldSubsystem
