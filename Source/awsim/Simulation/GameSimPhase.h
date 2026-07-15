@@ -13,4 +13,6 @@ public:
 	virtual void Step(float StepSeconds) {}
 
 	virtual int32 PhaseOrder() const { return 0; }
+
+	virtual bool StepsWhilePaused() const { return false; }
 };

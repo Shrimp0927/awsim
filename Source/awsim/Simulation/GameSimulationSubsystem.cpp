@@ -24,12 +24,18 @@ void USimulationSubsystem::RebuildPhaseOrder()
 		return;
 	}
 
-	TArray<USimPhase*> Phases = World->GetSubsystemArrayCopy<USimPhase>();
+	SetPhases(World->GetSubsystemArrayCopy<USimPhase>());
+}
+
+void USimulationSubsystem::SetPhases(const TArray<USimPhase*>& InPhases)
+{
+	TArray<USimPhase*> Phases = InPhases;
 	Phases.Sort([](const USimPhase& A, const USimPhase& B)
 	{
 		return A.PhaseOrder() < B.PhaseOrder();
 	});
 
+	OrderedPhases.Reset();
 	OrderedPhases.Reserve(Phases.Num());
 	for (USimPhase* Phase : Phases)
 	{
@@ -39,14 +45,29 @@ void USimulationSubsystem::RebuildPhaseOrder()
 
 bool USimulationSubsystem::IsTickable() const
 {
+	// Ticks while paused: pause gates the sim clock, not the tick.
 	const UWorld* World = GetWorld();
-	return bRunning && World && World->IsGameWorld();
+	return World && World->IsGameWorld();
 }
 
 void USimulationSubsystem::Tick(float DeltaSeconds)
 {
-	if (!bRunning || OrderedPhases.Num() == 0)
+	if (OrderedPhases.Num() == 0)
 	{
+		return;
+	}
+
+	if (!bRunning)
+	{
+		// Paused: input-band phases still pump once per frame with dt = 0 so
+		// player placements/edits keep applying; no sim time passes.
+		for (USimPhase* Phase : OrderedPhases)
+		{
+			if (Phase && Phase->StepsWhilePaused())
+			{
+				Phase->Step(0.f);
+			}
+		}
 		return;
 	}
 
@@ -72,8 +93,8 @@ void USimulationSubsystem::StepOnce()
 		}
 	}
 
-	// End-of-step money phase: deposits queued by phases land at once, so a
-	// tick is subtraction first, then one synchronized addition.
+	// Queued deposits land together at end of step: subtraction first, then
+	// one synchronized addition.
 	if (UWorld* World = GetWorld())
 	{
 		if (UGamePlayerFundsSubsystem* Funds = World->GetSubsystem<UGamePlayerFundsSubsystem>())

@@ -21,6 +21,9 @@ public:
 
 	int32 GetCount() const { return FMath::RoundToInt32(Count); }
 
+	// Directly establish a population (save/load, scenarios, specs).
+	void SetCount(float InCount) { Count = FMath::Max(0.f, InCount); }
+
 	// Injectable for world-less specs; resolved from the owning world when unset.
 	void SetHousing(UHousingSubsystem* InHousing) { Housing = InHousing; }
 	void SetEconomy(UEconomySubsystem* InEconomy) { Economy = InEconomy; }
@@ -35,10 +38,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UEconomySubsystem> Economy;
 
-	// Population is a macro quantity with growth dynamics: it moves toward the
-	// serviced housing capacity over time rather than jumping, at a speed the
-	// economy modulates. Authoritative saved state.
-	UPROPERTY() float Count = 100.f; // seed population
+	// Moves toward serviced housing capacity over time rather than jumping;
+	// authoritative saved state.
+	UPROPERTY() float Count = 0.f; // a new city starts empty
 
 	float BaseGrowthSpeed = 0.1f; // fraction of the gap closed per second
 };

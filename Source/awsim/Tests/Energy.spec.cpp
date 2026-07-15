@@ -5,10 +5,8 @@
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
-// Live spec for the Energy domain phase: global capacity/consumption sums,
-// island-scoped service, maintenance, and the daily money settlement. Driven
-// world-less via SetGrid/SetFunds injection. Effects use AmountAtMin ==
-// AmountAtMax so slider position never muddies the arithmetic.
+// Spec for the Energy domain phase: capacity/consumption sums, island-scoped
+// service, maintenance, and the daily money settlement.
 
 #if WITH_AUTOMATION_TESTS
 

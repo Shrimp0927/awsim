@@ -8,12 +8,8 @@
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
-// Live spec for the Population domain phase: a macro quantity that grows
-// toward the SERVICED housing capacity (islands with both energy and water),
-// at a speed the economy boosts. The full pipeline is wired via injection and
-// stepped in orchestrator order (Grid 200 -> Energy 201 -> Water 202 ->
-// Housing 203 -> Economy 204 -> Population 600), so each phase reads state
-// settled earlier in the same tick — deterministic by fixed phase order.
+// Spec for the Population domain phase: the count grows toward serviced
+// housing capacity (islands with both energy and water), boosted by the economy.
 
 #if WITH_AUTOMATION_TESTS
 
@@ -106,9 +102,9 @@ void FPopulationSpec::Define()
 
 	Describe("Starting state", [this]()
 	{
-		It("starts at the seed population", [this]()
+		It("starts empty — a new city has zero population", [this]()
 		{
-			TestEqual(TEXT("seed"), Population->GetCount(), 100);
+			TestEqual(TEXT("empty start"), Population->GetCount(), 0);
 		});
 	});
 
@@ -126,11 +122,12 @@ void FPopulationSpec::Define()
 		{
 			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
 			StepAll(1.f);
-			TestTrue(TEXT("grows toward the serviced home"), Population->GetCount() > 100);
+			TestTrue(TEXT("grows toward the serviced home"), Population->GetCount() > 0);
 		});
 
 		It("excludes housing on an island missing energy", [this]()
 		{
+			Population->SetCount(100.f); // established residents
 			Place(FGridCoord(5, 5), HomeDef(200.f));
 			Place(FGridCoord(6, 5), WaterPlantDef()); // water only
 			StepAll(1.f);
@@ -139,6 +136,7 @@ void FPopulationSpec::Define()
 
 		It("excludes housing on an island missing water", [this]()
 		{
+			Population->SetCount(100.f); // established residents
 			Place(FGridCoord(5, 5), HomeDef(200.f));
 			Place(FGridCoord(6, 5), PowerDef()); // power only
 			StepAll(1.f);
@@ -160,7 +158,7 @@ void FPopulationSpec::Define()
 		{
 			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
 			StepAll(1.f);
-			TestTrue(TEXT("moved up"), Population->GetCount() > 100);
+			TestTrue(TEXT("moved up"), Population->GetCount() > 0);
 			TestTrue(TEXT("only PART-way"), Population->GetCount() < 200);
 		});
 
@@ -169,9 +167,9 @@ void FPopulationSpec::Define()
 			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
 			for (int32 i = 0; i < 10; ++i) StepAll(1.f);
 			const int32 Before = Population->GetCount();
-			TestTrue(TEXT("grew first"), Before > 100);
+			TestTrue(TEXT("grew first"), Before > 0);
 
-			// Blackout: remove the power plant -> island unserviced -> capacity gone.
+			// Blackout: remove the power plant.
 			Grid->SetContent(FGridCoord(6, 5), FGridContent());
 			StepAll(1.f);
 			TestTrue(TEXT("trending down"), Population->GetCount() < Before);
@@ -179,19 +177,22 @@ void FPopulationSpec::Define()
 
 		It("holds steady when count already equals effective capacity", [this]()
 		{
-			PlaceServicedCluster(FGridCoord(5, 5), 100.f); // capacity == seed
+			Population->SetCount(100.f);
+			PlaceServicedCluster(FGridCoord(5, 5), 100.f); // capacity == count
 			StepAll(1.f);
 			TestEqual(TEXT("steady"), Population->GetCount(), 100);
 		});
 
 		It("trends toward zero when there is no serviced housing", [this]()
 		{
+			Population->SetCount(100.f); // residents with nothing to live in
 			for (int32 i = 0; i < 60; ++i) StepAll(1.f);
 			TestTrue(TEXT("nearly empty"), Population->GetCount() < 5);
 		});
 
 		It("stays non-negative", [this]()
 		{
+			Population->SetCount(100.f);
 			for (int32 i = 0; i < 300; ++i) StepAll(1.f);
 			TestTrue(TEXT("never below zero"), Population->GetCount() >= 0);
 		});
@@ -204,9 +205,9 @@ void FPopulationSpec::Define()
 			PlaceServicedCluster(FGridCoord(5, 5), 200.f);
 			StepAll(1.f);
 			const float C1 = static_cast<float>(Population->GetCount());
-			const float FractionNoGDP = (C1 - 100.f) / (200.f - 100.f);
+			const float FractionNoGDP = C1 / 200.f;
 
-			// A big powered business maxes the GDP boost (2x growth speed).
+			// A big powered business maxes the GDP growth boost.
 			Place(FGridCoord(6, 6), MakeBuildingDef({{EDomain::Economy, 2000.f}}));
 			StepAll(1.f);
 			const float C2 = static_cast<float>(Population->GetCount());

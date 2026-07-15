@@ -62,7 +62,7 @@ class UPlaceableDef : public UPrimaryDataAsset
 public:
 	UPROPERTY(EditAnywhere) EPlaceableType Type = EPlaceableType::None;
 	UPROPERTY(EditAnywhere) float Cost = 0.f; // placement price, paid from player funds
-	UPROPERTY(EditAnywhere) float DailyMaintenanceCost = 0.f; // daily upkeep cost this gets spend override=true
+	UPROPERTY(EditAnywhere) float DailyMaintenanceCost = 0.f; // daily upkeep
 	UPROPERTY(EditAnywhere) TSoftObjectPtr<UStaticMesh> Mesh;
 	UPROPERTY(EditAnywhere) TArray<FSliderDef> Sliders;
 	UPROPERTY(EditAnywhere) FIntPoint Dimensions = {1, 1}; // The width x len when facing North
@@ -78,15 +78,11 @@ struct FGridContent
 	UPROPERTY() EPlaceableDirection Facing = EPlaceableDirection::None;
 	UPROPERTY() TObjectPtr<UPlaceableDef> Definition;
 
-	// Per-instance slider values, parallel to Definition->Sliders. Seeded from
-	// the def's authored defaults on placement; domain subsystems read these,
-	// never the def's Value.
+	// Per-instance slider values parallel to Definition->Sliders; domain subsystems read these, never the def's authored Value.
 	UPROPERTY() TArray<float> SliderValues;
 };
 
-// Signed contribution of this content's sliders for a domain, interpolated by
-// each slider's live per-instance value across its range (the def's Value is
-// only the authoring default). Shared by every domain phase.
+// Signed contribution for a domain, interpolated by each slider's live per-instance value (falling back to the def's authored default).
 inline float DomainAmount(const FGridContent& Content, EDomain InDomain)
 {
 	if (!Content.Definition) return 0.f;
@@ -109,7 +105,6 @@ inline float DomainAmount(const FGridContent& Content, EDomain InDomain)
 	return Total;
 }
 
-// Whether a def touches a domain at all (any slider effect, either sign).
 inline bool DefHasDomain(const UPlaceableDef* Def, EDomain InDomain)
 {
 	if (!Def) return false;

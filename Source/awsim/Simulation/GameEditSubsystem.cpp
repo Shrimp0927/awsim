@@ -11,8 +11,8 @@ void UEditSubsystem::Step(float StepSeconds)
 		return;
 	}
 
-	// FIFO: later edits to the same slider overwrite earlier ones. Edits with
-	// an invalid target/index are dropped by the grid.
+	// FIFO: later edits to the same slider win; invalid targets are dropped by
+	// the grid.
 	for (const FSliderEdit& Edit : PendingEdits)
 	{
 		GridSubsystem->SetSliderValue(Edit.Target, Edit.SliderIndex, Edit.Value);

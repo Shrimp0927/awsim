@@ -5,10 +5,8 @@
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
-// Live spec for the Economy domain phase. The economy is pegged to ENERGY
-// only: an island without power produces no GDP; water is irrelevant here.
-// Tax is intentionally NOT modelled yet — buildings affect the economy at a
-// macro level only. Driven world-less via injection.
+// Spec for the Economy domain phase: GDP contributions, gated by island
+// energy service only (water does not gate GDP).
 
 #if WITH_AUTOMATION_TESTS
 
@@ -114,7 +112,7 @@ void FEconomySpec::Define()
 
 		It("does not require water — energy alone gates the economy", [this]()
 		{
-			// Business demands water too, but there is no water plant anywhere.
+			// Demands water too, but no water plant exists anywhere.
 			Place(FGridCoord(5, 5), MakeBuildingDef({{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}));
 			Place(FGridCoord(6, 5), MakeBuildingDef({{EDomain::Energy, 100.f}}));
 			StepAll();

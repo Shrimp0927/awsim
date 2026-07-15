@@ -4,9 +4,8 @@
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
-// Live spec for the Water domain phase — mirrors Energy: global capacity,
-// island-scoped service. Driven world-less via SetGrid injection. Effects use
-// AmountAtMin == AmountAtMax so slider position never muddies the arithmetic.
+// Spec for the Water domain phase (mirrors Energy): capacity/consumption sums
+// and island-scoped service.
 
 #if WITH_AUTOMATION_TESTS
 

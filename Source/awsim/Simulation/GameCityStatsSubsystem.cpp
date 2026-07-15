@@ -35,13 +35,31 @@ void UCityStatsSubsystem::Step(float StepSeconds)
 	{
 		Population = PopulationSubsystem->GetCount();
 	}
+}
 
+void UCityStatsSubsystem::Tick(float DeltaSeconds)
+{
 #if !UE_BUILD_SHIPPING
 	if (CVarAwsimDebugStats.GetValueOnGameThread() != 0)
 	{
 		DrawDebugStats();
 	}
 #endif
+}
+
+bool UCityStatsSubsystem::IsTickable() const
+{
+#if !UE_BUILD_SHIPPING
+	const UWorld* World = GetWorld();
+	return World && World->IsGameWorld();
+#else
+	return false;
+#endif
+}
+
+TStatId UCityStatsSubsystem::GetStatId() const
+{
+	RETURN_QUICK_DECLARE_CYCLE_STAT(UCityStatsSubsystem, STATGROUP_Tickables);
 }
 
 #if !UE_BUILD_SHIPPING

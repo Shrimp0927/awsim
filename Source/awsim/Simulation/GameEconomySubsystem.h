@@ -18,8 +18,8 @@ public:
 	virtual void Step(float StepSeconds) override;
 	virtual int32 PhaseOrder() const override { return 204; }
 
-	// Signed sum of Economy effects on energy-serviced islands. The economy is
-	// pegged to energy only: a business needs power to produce, not water.
+	// Signed sum of Economy effects on energy-serviced islands only (businesses
+	// need power, not water).
 	float GetGDP() const { return GDP; }
 
 	// Injectable for world-less specs; resolved from the owning world when unset.

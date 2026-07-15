@@ -7,11 +7,8 @@
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
-// Live spec for the Housing domain phase. Housing is pegged to utilities: raw
-// capacity counts everywhere, but only islands serviced by BOTH energy and
-// water contribute serviced capacity, and only serviced homes pay tax.
-// Driven world-less: the whole Grid -> Energy -> Water -> Housing pipeline is
-// wired via injection and stepped in orchestrator order.
+// Spec for the Housing domain phase: raw capacity counts everywhere; only
+// islands serviced by both energy and water count as serviced and pay tax.
 
 #if WITH_AUTOMATION_TESTS
 
@@ -148,8 +145,7 @@ void FHousingSpec::Define()
 			Place(FGridCoord(6, 5), HomeDef());
 			Place(FGridCoord(6, 6), PowerDef());
 			Place(FGridCoord(5, 6), WaterPlantDef());
-			// Unserviced island: a lone home far away.
-			Place(FGridCoord(50, 50), HomeDef());
+			Place(FGridCoord(50, 50), HomeDef()); // unserviced island: lone home far away
 			StepAll();
 			TestEqual(TEXT("two serviced homes x 10"), Housing->GetTaxRevenue(), 20.f);
 		});

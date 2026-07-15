@@ -23,8 +23,8 @@ public:
 	// Raw housing capacity: signed sum of Housing effects across all islands.
 	float GetCapacity() const { return Capacity; }
 
-	// Housing is pegged to utilities: only islands serviced by BOTH energy and
-	// water contribute here. Population grows toward this, not raw capacity.
+	// Only islands serviced by BOTH energy and water contribute; population
+	// grows toward this, not raw capacity.
 	float GetServicedCapacity() const { return ServicedCapacity; }
 
 	// Daily tax owed by serviced homes, deposited on day rollover.
@@ -36,9 +36,7 @@ public:
 	void SetWater(UGameWaterSubsystem* InWater) { Water = InWater; }
 	void SetFunds(UGamePlayerFundsSubsystem* InFunds) { Funds = InFunds; }
 
-	// Daily settlement: tax revenue is queued and lands when the orchestrator
-	// commits deposits at end of step. Called by Step on day rollover; public
-	// so specs can drive it directly.
+	// Tax revenue is queued until the orchestrator commits deposits at end of step.
 	void SettleDay();
 
 private:

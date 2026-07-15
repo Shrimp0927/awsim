@@ -26,6 +26,9 @@ public:
 
 	int32 GetDay() const { return DayCount; }
 
+	// Injectable phase list for world-less specs; sorted by PhaseOrder.
+	void SetPhases(const TArray<USimPhase*>& InPhases);
+
 private:
 	void StepOnce();
 	void RebuildPhaseOrder();
@@ -40,7 +43,7 @@ private:
 	float GameSpeed = 1.f;
 	bool bRunning = false;
 
-	int32 StepsPerDay = 300;
+	int32 StepsPerDay = 1000;
 	int32 StepCounter = 0;
 	int32 DayCount = 0;
 };

@@ -4,12 +4,8 @@
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
-// Live spec for the GridSubsystem features that exist today: bounds, placement
-// (footprint-aware, funds-gated), occupancy, and connected-island detection
-// (proximity, road, utility with producer gate). Placement/island logic never
-// calls GetWorld() when funds are injected via SetFunds, so a plain NewObject'd
-// subsystem can be driven directly.
-// (On UE < 5.5 the mask is EAutomationTestFlags::ApplicationContextMask.)
+// Spec for UGridSubsystem: bounds, funds-gated footprint placement, the
+// placement queue, per-instance sliders, and connected-island detection.
 
 #if WITH_AUTOMATION_TESTS
 
@@ -36,7 +32,7 @@ BEGIN_DEFINE_SPEC(FGridSpec, "awsim.Simulation.Grid",
 		return Def;
 	}
 
-	// A building def that PRODUCES a domain (positive effect at max slider).
+	// A building def that produces the given domain.
 	UPlaceableDef* MakeProducerDef(EDomain Domain)
 	{
 		UPlaceableDef* Def = MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None);
@@ -329,8 +325,8 @@ void FGridSpec::Define()
 		It("puts two buildings that reach the same road network into one island", [this]()
 		{
 			for (int32 x = 5; x <= 9; ++x) PlaceRoad(FGridCoord(x, 5)); // road along y=5
-			PlaceBuilding(FGridCoord(5, 7), EPlaceableDirection::South); // scans -Y to (5,5) at dist 2
-			PlaceBuilding(FGridCoord(9, 7), EPlaceableDirection::South); // scans -Y to (9,5)
+			PlaceBuilding(FGridCoord(5, 7), EPlaceableDirection::South); // faces the road
+			PlaceBuilding(FGridCoord(9, 7), EPlaceableDirection::South);
 			TestTrue(TEXT("same island via road"), SameIsland(FGridCoord(5, 7), FGridCoord(9, 7)));
 		});
 
@@ -346,8 +342,8 @@ void FGridSpec::Define()
 		It("does not connect a building facing away from the road", [this]()
 		{
 			for (int32 x = 10; x <= 12; ++x) PlaceRoad(FGridCoord(x, 10));
-			PlaceBuilding(FGridCoord(10, 12), EPlaceableDirection::South); // reaches (10,10)
-			PlaceBuilding(FGridCoord(12, 12), EPlaceableDirection::South); // reaches (12,10)
+			PlaceBuilding(FGridCoord(10, 12), EPlaceableDirection::South);
+			PlaceBuilding(FGridCoord(12, 12), EPlaceableDirection::South);
 			PlaceBuilding(FGridCoord(12, 8), EPlaceableDirection::South);  // road is +Y, faces -Y -> no reach
 			TestTrue(TEXT("facers connect"), SameIsland(FGridCoord(10, 12), FGridCoord(12, 12)));
 			TestFalse(TEXT("away-facer isolated"), SameIsland(FGridCoord(10, 12), FGridCoord(12, 8)));
@@ -359,7 +355,7 @@ void FGridSpec::Define()
 		It("connects a producer and a consumer on one utility network (facing ignored)", [this]()
 		{
 			for (int32 x = 10; x <= 14; ++x) PlaceUtility(FGridCoord(x, 10), EDomain::Energy);
-			// Both face North (AWAY from the utility to their South) — utility ignores facing.
+			// Both face away from the utility — utility ignores facing.
 			PlaceBuilding(FGridCoord(10, 12), EPlaceableDirection::North, MakeProducerDef(EDomain::Energy));
 			PlaceBuilding(FGridCoord(14, 12), EPlaceableDirection::North); // consumer
 			TestTrue(TEXT("same island"), SameIsland(FGridCoord(10, 12), FGridCoord(14, 12)));
@@ -395,16 +391,14 @@ void FGridSpec::Define()
 	{
 		It("merges a road group and a utility group through one bridging building", [this]()
 		{
-			// Road at (10,10); X reaches it from +Y, B (producer) reaches it from -Y.
 			PlaceRoad(FGridCoord(10, 10));
 			PlaceBuilding(FGridCoord(10, 12), EPlaceableDirection::South); // X -> road
 			PlaceBuilding(FGridCoord(10, 8), EPlaceableDirection::North, MakeProducerDef(EDomain::Energy)); // B -> road
 
-			// Utility at (10,6); B reaches it (any side), Y reaches it from -Y.
 			PlaceUtility(FGridCoord(10, 6), EDomain::Energy);
 			PlaceBuilding(FGridCoord(10, 4), EPlaceableDirection::North); // Y -> utility
 
-			// X --road-- B --utility-- Y  => all one island.
+			// X --road-- B --utility-- Y  => one island.
 			TestTrue(TEXT("bridged"), SameIsland(FGridCoord(10, 12), FGridCoord(10, 4)));
 		});
 	});

@@ -1,7 +1,5 @@
-// Dev-only console commands for driving the simulation without UI. They wrap
-// the same player-intent APIs the real UI will call (QueuePlacement /
-// QueueSliderEdit), so they exercise the production input path. Compiled out
-// of shipping builds entirely.
+// Dev-only console commands that wrap the same player-intent APIs the real UI will call,
+// so they exercise the production input path. Compiled out of shipping builds.
 
 #include "CoreMinimal.h"
 
@@ -9,19 +7,21 @@
 
 #include "HAL/IConsoleManager.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "awsim.h"
 #include "Entities/GridContent.h"
 #include "Simulation/GameGridSubsystem.h"
 #include "Simulation/GameEditSubsystem.h"
 #include "Simulation/GamePlayerFundsSubsystem.h"
+#include "Simulation/GameSimulationSubsystem.h"
 
 namespace
 {
-	// Effects run AmountAtMin = 0.5x .. AmountAtMax = 1x so slider edits are
-	// visible in the stats overlay.
-	UPlaceableDef* MakeDevDef(const TArray<TPair<EDomain, float>>& Effects, float Cost, float DailyMaintenance)
+	// Effects run AmountAtMin = 0.5x .. AmountAtMax = 1x so slider edits are visible in the stats overlay.
+	UPlaceableDef* MakeDevDef(const TCHAR* Name, const TArray<TPair<EDomain, float>>& Effects, float Cost, float DailyMaintenance)
 	{
-		UPlaceableDef* Def = NewObject<UPlaceableDef>(GetTransientPackage());
+		UPlaceableDef* Def = NewObject<UPlaceableDef>(GetTransientPackage(),
+			MakeUniqueObjectName(GetTransientPackage(), UPlaceableDef::StaticClass(), Name));
 		Def->Type = EPlaceableType::Building;
 		Def->Dimensions = FIntPoint(1, 1);
 		Def->Cost = Cost;
@@ -40,10 +40,10 @@ namespace
 		return Def;
 	}
 
-	UPlaceableDef* HomeDef()       { return MakeDevDef({{EDomain::Housing, 10.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}, 100.f, 1.f); }
-	UPlaceableDef* PowerDef()      { return MakeDevDef({{EDomain::Energy, 100.f}}, 500.f, 20.f); }
-	UPlaceableDef* WaterPlantDef() { return MakeDevDef({{EDomain::Water, 100.f}}, 500.f, 15.f); }
-	UPlaceableDef* BusinessDef()   { return MakeDevDef({{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}}, 200.f, 5.f); }
+	UPlaceableDef* HomeDef()       { return MakeDevDef(TEXT("Home"), {{EDomain::Housing, 10.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}, 100.f, 1.f); }
+	UPlaceableDef* PowerDef()      { return MakeDevDef(TEXT("PowerPlant"), {{EDomain::Energy, 100.f}}, 500.f, 20.f); }
+	UPlaceableDef* WaterPlantDef() { return MakeDevDef(TEXT("WaterPlant"), {{EDomain::Water, 100.f}}, 500.f, 15.f); }
+	UPlaceableDef* BusinessDef()   { return MakeDevDef(TEXT("Business"), {{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}}, 200.f, 5.f); }
 
 	bool ParseCoord(const TArray<FString>& Args, FGridCoord& Out)
 	{
@@ -118,6 +118,50 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdDemolish(
 		if (ParseCoord(Args, At)) QueuePlace(World, At, nullptr, TEXT("demolition"));
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs GCmdListBuildings(
+	TEXT("awsim.ListBuildings"),
+	TEXT("awsim.ListBuildings — dump every placed building: origin, live domain amounts, and each slider's index/value/range (feed the index to awsim.SetSlider)."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		const UGridSubsystem* Grid = World ? World->GetSubsystem<UGridSubsystem>() : nullptr;
+		if (!Grid)
+		{
+			UE_LOG(LogAwsim, Warning, TEXT("No GridSubsystem in this world."));
+			return;
+		}
+		const TArray<FPlacedBuilding>& Buildings = Grid->GetBuildings();
+		UE_LOG(LogAwsim, Log, TEXT("%d building(s):"), Buildings.Num());
+		for (const FPlacedBuilding& Building : Buildings)
+		{
+			const UPlaceableDef* Def = Building.Content.Definition;
+			FString DomainSummary;
+			for (const EDomain Domain : {EDomain::Housing, EDomain::Economy, EDomain::Energy, EDomain::Water})
+			{
+				const float Amount = DomainAmount(Building.Content, Domain);
+				if (!FMath::IsNearlyZero(Amount))
+				{
+					DomainSummary += FString::Printf(TEXT("  %s %+.1f"),
+						*UEnum::GetDisplayValueAsText(Domain).ToString(), Amount);
+				}
+			}
+			UE_LOG(LogAwsim, Log, TEXT("(%d, %d)  %s%s"),
+				Building.Origin.X, Building.Origin.Y,
+				Def ? *Def->GetName() : TEXT("<no def>"), *DomainSummary);
+			if (!Def)
+			{
+				continue;
+			}
+			for (int32 i = 0; i < Def->Sliders.Num(); ++i)
+			{
+				const FSliderDef& Slider = Def->Sliders[i];
+				const float Value = Building.Content.SliderValues.IsValidIndex(i)
+					? Building.Content.SliderValues[i] : Slider.Value;
+				UE_LOG(LogAwsim, Log, TEXT("    slider %d  '%s' = %.2f  [%.2f .. %.2f]"),
+					i, *Slider.Name.ToString(), Value, Slider.Range.Min, Slider.Range.Max);
+			}
+		}
+	}));
+
 static FAutoConsoleCommandWithWorldAndArgs GCmdSetSlider(
 	TEXT("awsim.SetSlider"),
 	TEXT("awsim.SetSlider <X> <Y> <Index> <Value> — queue a slider edit on a placed building."),
@@ -155,25 +199,104 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdGiveFunds(
 		UE_LOG(LogAwsim, Log, TEXT("Balance: %.0f"), Funds->GetBalance());
 	}));
 
-static FAutoConsoleCommandWithWorldAndArgs GCmdSpawnTestCity(
-	TEXT("awsim.SpawnTestCity"),
-	TEXT("awsim.SpawnTestCity [X Y] — funds + a serviced cluster (2 homes, power, water, business). Default origin 500 500."),
+static FAutoConsoleCommandWithWorldAndArgs GCmdPause(
+	TEXT("awsim.Pause"),
+	TEXT("awsim.Pause — toggle the sim clock. Paused, the input band (edits + placements) still applies and renders; domain stats and the day clock freeze until resume."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
+		USimulationSubsystem* Sim = World ? World->GetSubsystem<USimulationSubsystem>() : nullptr;
+		if (!Sim)
+		{
+			UE_LOG(LogAwsim, Warning, TEXT("No SimulationSubsystem in this world."));
+			return;
+		}
+		Sim->SetPaused(Sim->IsRunning());
+		UE_LOG(LogAwsim, Log, TEXT("Sim %s."), Sim->IsRunning() ? TEXT("resumed") : TEXT("paused (input band still live)"));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GCmdSetSpeed(
+	TEXT("awsim.SetSpeed"),
+	TEXT("awsim.SetSpeed <Multiplier> — sim speed (1 = normal, 2/3 = fast). Use awsim.Pause to pause; speed 0 also halts but doesn't remember your previous speed."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		USimulationSubsystem* Sim = World ? World->GetSubsystem<USimulationSubsystem>() : nullptr;
+		if (!Sim || Args.Num() < 1)
+		{
+			UE_LOG(LogAwsim, Warning, TEXT("Expected: <Multiplier> (and a world with a sim subsystem)."));
+			return;
+		}
+		Sim->SetGameSpeed(FCString::Atof(*Args[0]));
+		UE_LOG(LogAwsim, Log, TEXT("Sim speed: %.1fx"), Sim->GetGameSpeed());
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GCmdDeleteCity(
+	TEXT("awsim.DeleteCity"),
+	TEXT("awsim.DeleteCity — demolish ALL grid content immediately (buildings, roads, utilities). Funds and population are untouched; population then decays naturally. Use awsim.NewCity for a full reset."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		UGridSubsystem* Grid = World ? World->GetSubsystem<UGridSubsystem>() : nullptr;
+		if (!Grid)
+		{
+			UE_LOG(LogAwsim, Warning, TEXT("No GridSubsystem in this world."));
+			return;
+		}
+		// Collect targets first: removal mutates the containers being walked.
+		TArray<FGridCoord> Targets;
+		for (const FPlacedBuilding& Building : Grid->GetBuildings()) Targets.Add(Building.Origin);
+		for (const TPair<FGridCoord, FGridContent>& Road : Grid->GetRoads()) Targets.Add(Road.Key);
+		for (const TPair<FGridCoord, FGridContent>& Util : Grid->GetUtilities()) Targets.Add(Util.Key);
+		for (const FGridCoord& Target : Targets)
+		{
+			Grid->SetContent(Target, FGridContent());
+		}
+		UE_LOG(LogAwsim, Log, TEXT("Demolished %d pieces of grid content."), Targets.Num());
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GCmdNewCity(
+	TEXT("awsim.NewCity"),
+	TEXT("awsim.NewCity — reload the current level. World subsystems are torn down and recreated, so the whole sim (grid, funds, population, day counter) starts fresh."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (!World)
+		{
+			return;
+		}
+		const FString LevelName = UGameplayStatics::GetCurrentLevelName(World);
+		UE_LOG(LogAwsim, Log, TEXT("Reloading '%s' — starting a fresh city."), *LevelName);
+		UGameplayStatics::OpenLevel(World, FName(*LevelName));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GCmdSpawnTestCity(
+	TEXT("awsim.SpawnTestCity"),
+	TEXT("awsim.SpawnTestCity [X Y] [Blocks] — funds + a district of serviced clusters (each: 2 homes, power, water, business). Defaults: origin 500 500 (grid center), 1x1 blocks."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		const int32 X = Args.Num() >= 2 ? FCString::Atoi(*Args[0]) : 500;
+		const int32 Y = Args.Num() >= 2 ? FCString::Atoi(*Args[1]) : 500;
+		const int32 Blocks = Args.Num() >= 3 ? FMath::Clamp(FCString::Atoi(*Args[2]), 1, 50) : 1;
+
 		UGamePlayerFundsSubsystem* Funds = World ? World->GetSubsystem<UGamePlayerFundsSubsystem>() : nullptr;
 		if (Funds)
 		{
-			Funds->Deposit(10000.f);
+			Funds->Deposit(2000.f + 2000.f * Blocks * Blocks); // 1400/cluster to place, plus slack for upkeep
 			Funds->CommitDeposits();
 		}
-		const int32 X = Args.Num() >= 2 ? FCString::Atoi(*Args[0]) : 500;
-		const int32 Y = Args.Num() >= 2 ? FCString::Atoi(*Args[1]) : 500;
-		QueuePlace(World, FGridCoord(X, Y), HomeDef(), TEXT("home"));
-		QueuePlace(World, FGridCoord(X + 1, Y), HomeDef(), TEXT("home"));
-		QueuePlace(World, FGridCoord(X + 2, Y), PowerDef(), TEXT("power plant"));
-		QueuePlace(World, FGridCoord(X, Y + 1), WaterPlantDef(), TEXT("water plant"));
-		QueuePlace(World, FGridCoord(X + 1, Y + 1), BusinessDef(), TEXT("business"));
-		UE_LOG(LogAwsim, Log, TEXT("Test city queued around (%d, %d). Enable awsim.DebugStats 1 to watch it."), X, Y);
+
+		// Each cluster is 3x2; a 1-tile gap keeps neighbours within connector reach, so the district reads as one island.
+		for (int32 bx = 0; bx < Blocks; ++bx)
+		{
+			for (int32 by = 0; by < Blocks; ++by)
+			{
+				const int32 Cx = X + bx * 4;
+				const int32 Cy = Y + by * 3;
+				QueuePlace(World, FGridCoord(Cx, Cy), HomeDef(), TEXT("home"));
+				QueuePlace(World, FGridCoord(Cx + 1, Cy), HomeDef(), TEXT("home"));
+				QueuePlace(World, FGridCoord(Cx + 2, Cy), PowerDef(), TEXT("power plant"));
+				QueuePlace(World, FGridCoord(Cx, Cy + 1), WaterPlantDef(), TEXT("water plant"));
+				QueuePlace(World, FGridCoord(Cx + 1, Cy + 1), BusinessDef(), TEXT("business"));
+			}
+		}
+		UE_LOG(LogAwsim, Log, TEXT("Queued a %dx%d-block test city at (%d, %d). Enable awsim.DebugStats 1 to watch it."), Blocks, Blocks, X, Y);
 	}));
 
 #endif // !UE_BUILD_SHIPPING

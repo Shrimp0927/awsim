@@ -4,10 +4,8 @@
 #include "Entities/GridContent.h"
 #include "UObject/StrongObjectPtr.h"
 
-// Live spec for the player-edit queue: slider edits queue at any time and
-// apply FIFO when the edit phase steps (order 150 — before the grid at 200).
-// The grid is injected via SetGrid so a plain NewObject'd pair can be driven
-// world-less, matching the Grid spec.
+// Spec for the player-edit queue: slider edits queue at any time and apply
+// FIFO when the edit phase steps, before the grid phase.
 
 #if WITH_AUTOMATION_TESTS
 
@@ -17,8 +15,7 @@ BEGIN_DEFINE_SPEC(FEditSpec, "awsim.Simulation.Edit",
 	TStrongObjectPtr<UGridSubsystem> Grid;
 	TStrongObjectPtr<UEditSubsystem> Edit;
 
-	// A 1x1 building with one slider (default Value 0.5, Range 0..1) that
-	// consumes Energy — the shape the domain subsystems read.
+	// A 1x1 building with one energy-consuming slider (default 0.5, range 0..1).
 	UPlaceableDef* MakeSliderDef()
 	{
 		UPlaceableDef* Def = NewObject<UPlaceableDef>();
@@ -124,7 +121,7 @@ void FEditSpec::Define()
 				return Content;
 			}());
 
-			// Same order the orchestrator uses: 150 then 200.
+			// Orchestrator order: edit before grid.
 			Edit->Step(0.f);
 			Grid->Step(0.f);
 

@@ -8,7 +8,6 @@
 namespace
 {
 	// NOTE: placeholder tax model — each serviced home pays a flat daily tax.
-	// Subject to change.
 	constexpr float TaxPerHome = 10.f;
 }
 

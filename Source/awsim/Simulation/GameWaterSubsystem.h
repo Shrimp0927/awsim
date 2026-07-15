@@ -23,9 +23,8 @@ public:
 	float GetMaintenanceCost() const { return MaintenanceCost; }
 	float GetRevenue() const { return Revenue; }
 
-	// Per-island service result from the last Recompute, index-aligned with
-	// the grid's GetIslands(): serviced when local supply covers local demand.
-	// Downstream phases (Housing, Economy) gate on this.
+	// Index-aligned with the grid's GetIslands(); serviced when island-local
+	// supply covers island-local demand.
 	bool IsIslandServiced(int32 IslandIndex) const
 	{
 		return IslandServiced.IsValidIndex(IslandIndex) && IslandServiced[IslandIndex];
@@ -35,10 +34,8 @@ public:
 	void SetFunds(UGamePlayerFundsSubsystem* InFunds) { Funds = InFunds; }
 	void SetGrid(UGridSubsystem* InGrid) { Grid = InGrid; }
 
-	// Daily settlement: maintenance is forced out of player funds (Override, so
-	// the balance can go negative); revenue is queued and lands when the
-	// orchestrator commits deposits at end of step. Called by Step on day
-	// rollover; public so specs can drive it directly.
+	// Maintenance is forced out of funds (balance may go negative); revenue is
+	// queued until the orchestrator commits deposits at end of step.
 	void SettleDay();
 
 private:

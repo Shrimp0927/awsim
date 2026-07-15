@@ -2,10 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Simulation/GameSimPhase.h"
+#include "Tickable.h"
 #include "GameCityStatsSubsystem.generated.h"
 
 UCLASS()
-class AWSIM_API UCityStatsSubsystem : public USimPhase
+class AWSIM_API UCityStatsSubsystem : public USimPhase, public FTickableGameObject
 {
 	GENERATED_BODY()
 
@@ -13,6 +14,12 @@ public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Step(float StepSeconds) override;
 	virtual int32 PhaseOrder() const override { return 899; }
+
+	// Dev-overlay draw runs on the frame tick, not Step, so it keeps drawing
+	// while the sim clock is paused.
+	virtual void Tick(float DeltaSeconds) override;
+	virtual TStatId GetStatId() const override;
+	virtual bool IsTickable() const override;
 
 	int32 GetPopulation() const { return Population; }
 	float GetPlayerRating() const { return PlayerRating; }
@@ -24,9 +31,8 @@ public:
 
 private:
 #if !UE_BUILD_SHIPPING
-	// Dev-only on-screen dump of the whole sim's macro state, drawn each step
-	// while `awsim.DebugStats 1`. CityStats runs last (899), so every domain's
-	// numbers for this tick are final when this reads them.
+	// On-screen dump while `awsim.DebugStats 1`; CityStats runs at 899, so every
+	// domain's numbers are final when this reads them.
 	void DrawDebugStats() const;
 #endif
 

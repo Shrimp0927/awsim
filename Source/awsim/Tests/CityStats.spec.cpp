@@ -1,12 +1,7 @@
 #include "Misc/AutomationTest.h"
 
-// BEHAVIOUR SPEC — written BEFORE implementation (BDD-first). It() names are the
-// contract; bodies are PENDING stubs sketching the intended API in comments.
-//
-// CityStats is the AGGREGATOR: it reflects the domain subsystems (Energy, Water,
-// Housing, Economy) into player-facing meters (each 0..100), and owns the rating
-// + lose condition. Energy/Water meters track how much demand is actually met
-// across islands (service coverage), NOT raw global capacity.
+// Pending BDD spec (bodies are stubs) for CityStats: player-facing domain
+// meters (0..100), the rating, and the lose condition.
 
 #if WITH_AUTOMATION_TESTS
 
@@ -31,21 +26,16 @@ void FCityStatsSpec::Define()
 		It("reports a loss when the rating reaches 0", [this]()
 		{
 			// expect: given rating driven to 0, CityStats->HasLost() == true
-			// NOTE: no win condition for now; what happens at 0 is TBD.
 		});
 
 		It("is not lost while the rating is above 0", [this]() {});
-
-		// NOTE: how the rating moves over time is a separate mechanic, TBD.
 	});
 
 	Describe("Meters reflect the domain subsystems", [this]()
 	{
 		It("raises the Energy meter as more energy demand is met across islands", [this]()
 		{
-			// reflects island SERVICE COVERAGE, not raw capacity: a plant that
-			// powers nothing (its island has no demand / it's a lone island) does
-			// not improve the meter.
+			// service coverage, not raw capacity: a plant powering nothing does not improve the meter
 		});
 
 		It("raises the Water meter as more water demand is met across islands", [this]() {});
@@ -58,8 +48,7 @@ void FCityStatsSpec::Define()
 
 		It("moves multiple meters for a building that contributes to several domains", [this]()
 		{
-			// e.g. a mixed-use building that adds energy but consumes water should
-			// raise the Energy meter and lower the Water meter (within its island).
+			// e.g. adds energy but consumes water -> Energy meter up, Water meter down
 		});
 	});
 }
