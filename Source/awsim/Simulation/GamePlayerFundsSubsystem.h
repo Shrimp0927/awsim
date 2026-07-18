@@ -19,9 +19,7 @@ public:
 	// Override forces the spend through regardless of balance.
 	bool TrySpend(float Cost, bool Override = false);
 
-	// Deposits buffer during a sim step and land in Balance together when the
-	// orchestrator calls CommitDeposits at end of step, so subsystems stay
-	// synchronized regardless of phase order.
+	// Deposits buffer during the step and land in Balance together at CommitDeposits.
 	void Deposit(float Amount);
 	void CommitDeposits();
 	float GetPendingDeposits() const { return PendingDeposits; }

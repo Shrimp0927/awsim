@@ -59,8 +59,7 @@ namespace
 		}
 	}
 
-	// Scan outward from each edge tile up to ConnectorReach; a building blocks
-	// the ray, a connector in NetMap ends it, empty continues.
+	// Scan outward up to ConnectorReach: a building blocks the ray, a connector ends it.
 	void ScanForNetworks(const TArray<FGridCoord>& Edge, FGridCoord Step,
 		const TMap<FGridCoord, int32>& NetMap, const TMap<FGridCoord, int32>& BuildingAt,
 		TSet<int32>& OutNets)
@@ -104,9 +103,7 @@ namespace
 		Parent[DsuFind(Parent, A)] = DsuFind(Parent, B);
 	}
 
-	// Flood-fill connectors into networks (8-connectivity); utilities join only
-	// same-domain neighbours, with OutDomains[id] recording each network's
-	// domain (pass nullptr for roads).
+	// Flood-fill connectors into networks (8-connectivity); utilities join same-domain only.
 	void LabelNetworks(const TMap<FGridCoord, FGridContent>& Tiles,
 		TMap<FGridCoord, int32>& OutNet, TArray<EDomain>* OutDomains)
 	{
@@ -152,8 +149,7 @@ namespace
 
 void UGridSubsystem::Step(float StepSeconds)
 {
-	// Apply queued placements before domain phases read; invalid/unaffordable
-	// ones are dropped here.
+	// Apply queued placements before domain phases read; invalid ones drop in SetContent.
 	for (FPlacedBuilding& Pending : PendingPlacements)
 	{
 		SetContent(Pending.Origin, MoveTemp(Pending.Content));
@@ -201,6 +197,7 @@ bool UGridSubsystem::SetSliderValue(FGridCoord Tile, int32 SliderIndex, float Va
 
 	const FFloatInterval& Range = Content.Definition->Sliders[SliderIndex].Range;
 	Content.SliderValues[SliderIndex] = FMath::Clamp(Value, Range.Min, Range.Max);
+	++SliderRevision;
 	return true;
 }
 
@@ -209,12 +206,13 @@ bool UGridSubsystem::IsTileOccupied(FGridCoord Tile) const
 	return Roads.Contains(Tile) || Utilities.Contains(Tile) || BuildingAt.Contains(Tile);
 }
 
-FGridContent UGridSubsystem::GetContentAt(FGridCoord Tile) const
+const FGridContent& UGridSubsystem::GetContentAt(FGridCoord Tile) const
 {
+	static const FGridContent Empty;
 	if (const FGridContent* R = Roads.Find(Tile)) return *R;
 	if (const FGridContent* U = Utilities.Find(Tile)) return *U;
 	if (const int32* Idx = BuildingAt.Find(Tile)) return Buildings[*Idx].Content;
-	return FGridContent();
+	return Empty;
 }
 
 bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
@@ -253,8 +251,7 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 		}
 	}
 
-	// Seed slider values from the def's authored defaults unless the caller
-	// supplied a full set.
+	// Seed slider values from authored defaults unless the caller supplied a full set.
 	if (Content.Definition && Content.SliderValues.Num() != Content.Definition->Sliders.Num())
 	{
 		Content.SliderValues.Reset(Content.Definition->Sliders.Num());
@@ -358,8 +355,7 @@ void UGridSubsystem::RebuildIslands() const
 	const int32 N = Buildings.Num();
 	if (N == 0) return;
 
-	// Networks are cached, but producer flags depend on buildings so they are
-	// rebuilt every time.
+	// Networks are cached, but producer flags depend on buildings so rebuild every time.
 	EnsureNetworks();
 	TArray<bool> UtilHasProducer;
 	UtilHasProducer.Init(false, UtilDomain.Num());
@@ -402,8 +398,7 @@ void UGridSubsystem::RebuildIslands() const
 		for (int32 k = 1; k < Group.Value.Num(); ++k) DsuUnion(Parent, Group.Value[0], Group.Value[k]);
 	}
 
-	// Utility — all four sides (facing ignored); joins only when the network
-	// has a matching-domain producer on it.
+	// Utility — all four sides; joins only when the network has a matching-domain producer.
 	const EPlaceableDirection Sides[] = {
 		EPlaceableDirection::North, EPlaceableDirection::East,
 		EPlaceableDirection::South, EPlaceableDirection::West };

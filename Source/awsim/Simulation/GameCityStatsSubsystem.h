@@ -15,8 +15,7 @@ public:
 	virtual void Step(float StepSeconds) override;
 	virtual int32 PhaseOrder() const override { return 899; }
 
-	// Dev-overlay draw runs on the frame tick, not Step, so it keeps drawing
-	// while the sim clock is paused.
+	// Draws on the frame tick so the overlay keeps updating while the sim is paused.
 	virtual void Tick(float DeltaSeconds) override;
 	virtual TStatId GetStatId() const override;
 	virtual bool IsTickable() const override;
@@ -31,8 +30,7 @@ public:
 
 private:
 #if !UE_BUILD_SHIPPING
-	// On-screen dump while `awsim.DebugStats 1`; CityStats runs at 899, so every
-	// domain's numbers are final when this reads them.
+	// On-screen dump while `awsim.DebugStats 1`; at phase 899 every domain's numbers are final.
 	void DrawDebugStats() const;
 #endif
 

@@ -23,8 +23,7 @@ public:
 	float GetMaintenanceCost() const { return MaintenanceCost; }
 	float GetRevenue() const { return Revenue; }
 
-	// Index-aligned with the grid's GetIslands(); serviced when island-local
-	// supply covers island-local demand.
+	// Index-aligned with GetIslands(); serviced = island-local supply covers demand.
 	bool IsIslandServiced(int32 IslandIndex) const
 	{
 		return IslandServiced.IsValidIndex(IslandIndex) && IslandServiced[IslandIndex];
@@ -34,8 +33,7 @@ public:
 	void SetFunds(UGamePlayerFundsSubsystem* InFunds) { Funds = InFunds; }
 	void SetGrid(UGridSubsystem* InGrid) { Grid = InGrid; }
 
-	// Maintenance is forced out of funds (balance may go negative); revenue is
-	// queued until the orchestrator commits deposits at end of step.
+	// Maintenance is forced out (may go negative); revenue queues until end-of-step commit.
 	void SettleDay();
 
 private:
@@ -57,4 +55,8 @@ private:
 	float Revenue = 0.f;
 
 	int32 LastSettledDay = INDEX_NONE;
+
+	// Grid revisions the cached totals were computed from (see Step).
+	uint64 LastContentRevision = MAX_uint64;
+	uint64 LastSliderRevision = MAX_uint64;
 };

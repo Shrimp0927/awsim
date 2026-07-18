@@ -18,12 +18,12 @@
 namespace
 {
 	// Effects run AmountAtMin = 0.5x .. AmountAtMax = 1x so slider edits are visible in the stats overlay.
-	UPlaceableDef* MakeDevDef(const TCHAR* Name, const TArray<TPair<EDomain, float>>& Effects, float Cost, float DailyMaintenance)
+	UPlaceableDef* MakeDevDef(const TCHAR* Name, const TArray<TPair<EDomain, float>>& Effects, float Cost, float DailyMaintenance, FIntPoint Dimensions)
 	{
 		UPlaceableDef* Def = NewObject<UPlaceableDef>(GetTransientPackage(),
 			MakeUniqueObjectName(GetTransientPackage(), UPlaceableDef::StaticClass(), Name));
 		Def->Type = EPlaceableType::Building;
-		Def->Dimensions = FIntPoint(1, 1);
+		Def->Dimensions = Dimensions;
 		Def->Cost = Cost;
 		Def->DailyMaintenanceCost = DailyMaintenance;
 		FSliderDef Slider;
@@ -40,10 +40,11 @@ namespace
 		return Def;
 	}
 
-	UPlaceableDef* HomeDef()       { return MakeDevDef(TEXT("Home"), {{EDomain::Housing, 10.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}, 100.f, 1.f); }
-	UPlaceableDef* PowerDef()      { return MakeDevDef(TEXT("PowerPlant"), {{EDomain::Energy, 100.f}}, 500.f, 20.f); }
-	UPlaceableDef* WaterPlantDef() { return MakeDevDef(TEXT("WaterPlant"), {{EDomain::Water, 100.f}}, 500.f, 15.f); }
-	UPlaceableDef* BusinessDef()   { return MakeDevDef(TEXT("Business"), {{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}}, 200.f, 5.f); }
+	// Multi-tile footprints so buildings are visible from the whole-grid camera.
+	UPlaceableDef* HomeDef()       { return MakeDevDef(TEXT("Home"), {{EDomain::Housing, 10.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}, 100.f, 1.f, FIntPoint(6, 6)); }
+	UPlaceableDef* PowerDef()      { return MakeDevDef(TEXT("PowerPlant"), {{EDomain::Energy, 100.f}}, 500.f, 20.f, FIntPoint(10, 10)); }
+	UPlaceableDef* WaterPlantDef() { return MakeDevDef(TEXT("WaterPlant"), {{EDomain::Water, 100.f}}, 500.f, 15.f, FIntPoint(10, 10)); }
+	UPlaceableDef* BusinessDef()   { return MakeDevDef(TEXT("Business"), {{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}}, 200.f, 5.f, FIntPoint(8, 8)); }
 
 	bool ParseCoord(const TArray<FString>& Args, FGridCoord& Out)
 	{
@@ -62,6 +63,12 @@ namespace
 		if (!Grid)
 		{
 			UE_LOG(LogAwsim, Warning, TEXT("No GridSubsystem in this world."));
+			return;
+		}
+		if (!UGridSubsystem::IsInBounds(At))
+		{
+			UE_LOG(LogAwsim, Warning, TEXT("(%d, %d) is out of bounds — the grid is %d x %d (tiles 0..%d)."),
+				At.X, At.Y, UGridSubsystem::GetWidth(), UGridSubsystem::GetHeight(), UGridSubsystem::GetWidth() - 1);
 			return;
 		}
 		FGridContent Content;
@@ -268,35 +275,107 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdNewCity(
 
 static FAutoConsoleCommandWithWorldAndArgs GCmdSpawnTestCity(
 	TEXT("awsim.SpawnTestCity"),
-	TEXT("awsim.SpawnTestCity [X Y] [Blocks] — funds + a district of serviced clusters (each: 2 homes, power, water, business). Defaults: origin 500 500 (grid center), 1x1 blocks."),
+	TEXT("awsim.SpawnTestCity — funds + 5 buildings (2 homes, power, water, business) at the grid center."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
-		const int32 X = Args.Num() >= 2 ? FCString::Atoi(*Args[0]) : 500;
-		const int32 Y = Args.Num() >= 2 ? FCString::Atoi(*Args[1]) : 500;
-		const int32 Blocks = Args.Num() >= 3 ? FMath::Clamp(FCString::Atoi(*Args[2]), 1, 50) : 1;
-
-		UGamePlayerFundsSubsystem* Funds = World ? World->GetSubsystem<UGamePlayerFundsSubsystem>() : nullptr;
-		if (Funds)
+		if (UGamePlayerFundsSubsystem* Funds = World ? World->GetSubsystem<UGamePlayerFundsSubsystem>() : nullptr)
 		{
-			Funds->Deposit(2000.f + 2000.f * Blocks * Blocks); // 1400/cluster to place, plus slack for upkeep
+			Funds->Deposit(10000.f);
 			Funds->CommitDeposits();
 		}
 
-		// Each cluster is 3x2; a 1-tile gap keeps neighbours within connector reach, so the district reads as one island.
-		for (int32 bx = 0; bx < Blocks; ++bx)
+		// Centered row; 2-tile gaps keep neighbours in connector reach (one island) but visually separate.
+		const int32 X = UGridSubsystem::GetWidth() / 2 - 24;
+		const int32 Y = UGridSubsystem::GetHeight() / 2 - 5;
+		QueuePlace(World, FGridCoord(X, Y), HomeDef(), TEXT("home"));
+		QueuePlace(World, FGridCoord(X + 8, Y), HomeDef(), TEXT("home"));
+		QueuePlace(World, FGridCoord(X + 16, Y), PowerDef(), TEXT("power plant"));
+		QueuePlace(World, FGridCoord(X + 28, Y), WaterPlantDef(), TEXT("water plant"));
+		QueuePlace(World, FGridCoord(X + 40, Y), BusinessDef(), TEXT("business"));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GCmdSpawnHeavyCity(
+	TEXT("awsim.SpawnHeavyCity"),
+	TEXT("awsim.SpawnHeavyCity — stress test: 8 full-width roads split the grid into bands, then 80% of the possible 6x6 building slots are filled (homes/business/power/water). Funds are deposited to cover it. Best on an empty city."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		UGridSubsystem* Grid = World ? World->GetSubsystem<UGridSubsystem>() : nullptr;
+		UGamePlayerFundsSubsystem* Funds = World ? World->GetSubsystem<UGamePlayerFundsSubsystem>() : nullptr;
+		if (!Grid || !Funds)
 		{
-			for (int32 by = 0; by < Blocks; ++by)
+			UE_LOG(LogAwsim, Warning, TEXT("No grid/funds subsystem in this world."));
+			return;
+		}
+
+		constexpr int32 Side = 6; // uniform footprint so slots form a regular lattice
+		const int32 W = UGridSubsystem::GetWidth();
+		const int32 H = UGridSubsystem::GetHeight();
+
+		// 8 evenly spaced full-width road rows, splitting the grid into 9 bands.
+		TArray<int32> RoadRows;
+		for (int32 i = 1; i <= 8; ++i)
+		{
+			RoadRows.Add(i * H / 9);
+		}
+
+		// 6x6 variants of the dev defs; two homes per cycle so housing dominates.
+		UPlaceableDef* Home = MakeDevDef(TEXT("HeavyHome"), {{EDomain::Housing, 10.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}, 100.f, 1.f, FIntPoint(Side, Side));
+		UPlaceableDef* Business = MakeDevDef(TEXT("HeavyBusiness"), {{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}}, 200.f, 5.f, FIntPoint(Side, Side));
+		UPlaceableDef* Power = MakeDevDef(TEXT("HeavyPower"), {{EDomain::Energy, 100.f}}, 500.f, 20.f, FIntPoint(Side, Side));
+		UPlaceableDef* Water = MakeDevDef(TEXT("HeavyWater"), {{EDomain::Water, 100.f}}, 500.f, 15.f, FIntPoint(Side, Side));
+		UPlaceableDef* Cycle[] = {Home, Business, Home, Power, Water};
+
+		float TotalCost = 0.f;
+		int32 Slots = 0, Queued = 0;
+		int32 y = 0;
+		while (y + Side <= H)
+		{
+			// A road row cutting through this building row? Resume just below it.
+			const int32* Blocker = RoadRows.FindByPredicate([y](int32 Row) { return Row >= y && Row < y + Side; });
+			if (Blocker)
 			{
-				const int32 Cx = X + bx * 4;
-				const int32 Cy = Y + by * 3;
-				QueuePlace(World, FGridCoord(Cx, Cy), HomeDef(), TEXT("home"));
-				QueuePlace(World, FGridCoord(Cx + 1, Cy), HomeDef(), TEXT("home"));
-				QueuePlace(World, FGridCoord(Cx + 2, Cy), PowerDef(), TEXT("power plant"));
-				QueuePlace(World, FGridCoord(Cx, Cy + 1), WaterPlantDef(), TEXT("water plant"));
-				QueuePlace(World, FGridCoord(Cx + 1, Cy + 1), BusinessDef(), TEXT("business"));
+				y = *Blocker + 1;
+				continue;
+			}
+			for (int32 x = 0; x + Side <= W; x += Side)
+			{
+				if (Slots++ % 5 == 4)
+				{
+					continue; // leave every 5th slot empty -> 80% of the possible slots
+				}
+				FGridContent Content;
+				Content.Type = EPlaceableType::Building;
+				Content.Facing = EPlaceableDirection::North;
+				Content.Definition = Cycle[Queued % UE_ARRAY_COUNT(Cycle)];
+				Grid->QueuePlacement(FGridCoord(x, y), Content);
+				TotalCost += Content.Definition->Cost;
+				++Queued;
+			}
+			y += Side;
+		}
+
+		UPlaceableDef* RoadDef = NewObject<UPlaceableDef>(GetTransientPackage(),
+			MakeUniqueObjectName(GetTransientPackage(), UPlaceableDef::StaticClass(), TEXT("HeavyRoad")));
+		RoadDef->Type = EPlaceableType::Road;
+		RoadDef->Dimensions = FIntPoint(1, 1);
+		RoadDef->Cost = 10.f;
+		for (const int32 Row : RoadRows)
+		{
+			for (int32 x = 0; x < W; ++x)
+			{
+				FGridContent Content;
+				Content.Type = EPlaceableType::Road;
+				Content.Facing = EPlaceableDirection::None;
+				Content.Definition = RoadDef;
+				Grid->QueuePlacement(FGridCoord(x, Row), Content);
+				TotalCost += RoadDef->Cost;
 			}
 		}
-		UE_LOG(LogAwsim, Log, TEXT("Queued a %dx%d-block test city at (%d, %d). Enable awsim.DebugStats 1 to watch it."), Blocks, Blocks, X, Y);
+
+		Funds->Deposit(TotalCost);
+		Funds->CommitDeposits(); // available before the queue drains on the next sim step
+		UE_LOG(LogAwsim, Log, TEXT("Queued %d of %d building slots (80%%) and %d road tiles across 8 roads; deposited %.0f to cover it. Applies on the next sim step."),
+			Queued, Slots, RoadRows.Num() * W, TotalCost);
 	}));
 
 #endif // !UE_BUILD_SHIPPING

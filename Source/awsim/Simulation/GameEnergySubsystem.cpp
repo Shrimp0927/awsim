@@ -13,7 +13,15 @@ void UEnergySubsystem::Step(float StepSeconds)
 		return;
 	}
 
-	Recompute(*GridSubsystem);
+	// Skip the island walk when neither grid content nor sliders changed.
+	const uint64 ContentRev = GridSubsystem->GetContentRevision();
+	const uint64 SliderRev = GridSubsystem->GetSliderRevision();
+	if (ContentRev != LastContentRevision || SliderRev != LastSliderRevision)
+	{
+		LastContentRevision = ContentRev;
+		LastSliderRevision = SliderRev;
+		Recompute(*GridSubsystem);
+	}
 
 	// Settle money once per in-game day, skipping the day the sim starts on.
 	const UWorld* World = GetWorld();

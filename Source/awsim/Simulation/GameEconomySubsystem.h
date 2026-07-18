@@ -18,8 +18,7 @@ public:
 	virtual void Step(float StepSeconds) override;
 	virtual int32 PhaseOrder() const override { return 204; }
 
-	// Signed sum of Economy effects on energy-serviced islands only (businesses
-	// need power, not water).
+	// Signed Economy sum over energy-serviced islands (businesses need power, not water).
 	float GetGDP() const { return GDP; }
 
 	// Injectable for world-less specs; resolved from the owning world when unset.
@@ -38,4 +37,8 @@ private:
 	TObjectPtr<UEnergySubsystem> Energy;
 
 	float GDP = 0.f;
+
+	// Grid revisions the cached GDP was computed from (see Step).
+	uint64 LastContentRevision = MAX_uint64;
+	uint64 LastSliderRevision = MAX_uint64;
 };

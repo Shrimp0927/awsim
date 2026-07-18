@@ -59,8 +59,7 @@ void USimulationSubsystem::Tick(float DeltaSeconds)
 
 	if (!bRunning)
 	{
-		// Paused: input-band phases still pump once per frame with dt = 0 so
-		// player placements/edits keep applying; no sim time passes.
+		// Paused: input-band phases still pump with dt = 0; no sim time passes.
 		for (USimPhase* Phase : OrderedPhases)
 		{
 			if (Phase && Phase->StepsWhilePaused())
@@ -81,6 +80,13 @@ void USimulationSubsystem::Tick(float DeltaSeconds)
 		Accumulator -= FixedStep;
 		++Steps;
 	}
+
+	// Cap hit with debt left: drop the backlog so the sim slows down instead of
+	// every later frame paying max catch-up steps forever.
+	if (Accumulator >= FixedStep)
+	{
+		Accumulator = 0.f;
+	}
 }
 
 void USimulationSubsystem::StepOnce()
@@ -93,8 +99,7 @@ void USimulationSubsystem::StepOnce()
 		}
 	}
 
-	// Queued deposits land together at end of step: subtraction first, then
-	// one synchronized addition.
+	// Deposits land together at end of step: subtractions first, one synchronized addition.
 	if (UWorld* World = GetWorld())
 	{
 		if (UGamePlayerFundsSubsystem* Funds = World->GetSubsystem<UGamePlayerFundsSubsystem>())

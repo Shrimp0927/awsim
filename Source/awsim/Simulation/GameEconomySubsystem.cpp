@@ -12,7 +12,15 @@ void UEconomySubsystem::Step(float StepSeconds)
 		return;
 	}
 
-	Recompute(*GridSubsystem, *EnergySubsystem);
+	// Skip when neither revision moved; energy's serviced flags derive from the same revisions.
+	const uint64 ContentRev = GridSubsystem->GetContentRevision();
+	const uint64 SliderRev = GridSubsystem->GetSliderRevision();
+	if (ContentRev != LastContentRevision || SliderRev != LastSliderRevision)
+	{
+		LastContentRevision = ContentRev;
+		LastSliderRevision = SliderRev;
+		Recompute(*GridSubsystem, *EnergySubsystem);
+	}
 }
 
 void UEconomySubsystem::Recompute(const UGridSubsystem& GridSubsystem, const UEnergySubsystem& EnergySubsystem)

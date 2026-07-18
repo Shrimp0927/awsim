@@ -88,18 +88,18 @@ void FGridSpec::Define()
 
 	Describe("World dimensions", [this]()
 	{
-		It("is a 1000 x 1000 grid", [this]()
+		It("is a 500 x 500 grid", [this]()
 		{
-			TestEqual(TEXT("width"), UGridSubsystem::GetWidth(), 1000);
-			TestEqual(TEXT("height"), UGridSubsystem::GetHeight(), 1000);
+			TestEqual(TEXT("width"), UGridSubsystem::GetWidth(), 500);
+			TestEqual(TEXT("height"), UGridSubsystem::GetHeight(), 500);
 		});
 
-		It("treats coordinates outside 0..999 as out of bounds", [this]()
+		It("treats coordinates outside 0..499 as out of bounds", [this]()
 		{
 			TestTrue(TEXT("origin"), UGridSubsystem::IsInBounds(FGridCoord(0, 0)));
-			TestTrue(TEXT("far corner"), UGridSubsystem::IsInBounds(FGridCoord(999, 999)));
+			TestTrue(TEXT("far corner"), UGridSubsystem::IsInBounds(FGridCoord(499, 499)));
 			TestFalse(TEXT("negative x"), UGridSubsystem::IsInBounds(FGridCoord(-1, 0)));
-			TestFalse(TEXT("x == 1000"), UGridSubsystem::IsInBounds(FGridCoord(1000, 0)));
+			TestFalse(TEXT("x == 500"), UGridSubsystem::IsInBounds(FGridCoord(500, 0)));
 		});
 	});
 

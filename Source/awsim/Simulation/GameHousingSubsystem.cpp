@@ -22,7 +22,15 @@ void UHousingSubsystem::Step(float StepSeconds)
 		return;
 	}
 
-	Recompute(*GridSubsystem, *EnergySubsystem, *WaterSubsystem);
+	// Skip when neither revision moved; the serviced flags derive from the same revisions.
+	const uint64 ContentRev = GridSubsystem->GetContentRevision();
+	const uint64 SliderRev = GridSubsystem->GetSliderRevision();
+	if (ContentRev != LastContentRevision || SliderRev != LastSliderRevision)
+	{
+		LastContentRevision = ContentRev;
+		LastSliderRevision = SliderRev;
+		Recompute(*GridSubsystem, *EnergySubsystem, *WaterSubsystem);
+	}
 
 	// Settle money once per in-game day, skipping the day the sim starts on.
 	const UWorld* World = GetWorld();

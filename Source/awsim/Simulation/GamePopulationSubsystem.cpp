@@ -16,8 +16,7 @@ void UPopulationSubsystem::Step(float StepSeconds)
 	// People only live in serviced homes; unserviced capacity holds nobody.
 	const float Target = FMath::Max(0.f, HousingSubsystem->GetServicedCapacity());
 
-	// NOTE: placeholder growth model — the gap closes exponentially, with GDP
-	// boosting the speed up to 2x.
+	// NOTE: placeholder growth model — exponential gap close, GDP boosts speed up to 2x.
 	const float EconomyBoost = FMath::Clamp(EconomySubsystem->GetGDP() * 0.001f, 0.f, 1.f);
 	const float Speed = BaseGrowthSpeed * (1.f + EconomyBoost);
 

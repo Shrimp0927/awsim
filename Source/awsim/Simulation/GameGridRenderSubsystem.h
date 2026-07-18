@@ -8,12 +8,10 @@
 class AActor;
 class UGridSubsystem;
 class UInstancedStaticMeshComponent;
-class UMaterialInterface;
 class UStaticMesh;
 
-// Projects grid content into instanced static meshes. Deliberately NOT a
-// USimPhase: it ticks per frame and rebuilds only when the grid's content
-// revision changes.
+// Projects grid content into ISMs. Deliberately NOT a USimPhase: it ticks per
+// frame and rebuilds only when the grid's content revision changes.
 UCLASS()
 class AWSIM_API UGridRenderSubsystem : public UWorldSubsystem, public FTickableGameObject
 {
@@ -27,19 +25,25 @@ public:
 	virtual bool IsTickable() const override;
 
 private:
-	UInstancedStaticMeshComponent* EnsureLayer(int32 LayerIndex);
+	UInstancedStaticMeshComponent* CreateIsmComponent(UStaticMesh* Mesh);
+	UInstancedStaticMeshComponent* EnsureMeshLayer(UStaticMesh* Mesh);
 	void RebuildInstances(const UGridSubsystem& Grid);
 
-	// One ISM layer per visual category (roads, utilities, buildings by their
-	// dominant domain).
+	// One ISM per unique def mesh; content renders whatever its def authors.
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UInstancedStaticMeshComponent>> Layers;
+	TMap<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>> MeshLayers;
+
+	// Footprint-sized cubes for defs with no authored mesh.
+	UPROPERTY(Transient)
+	TObjectPtr<UInstancedStaticMeshComponent> MissingMeshLayer;
+
+	// Stand-in flat world floor until a real map exists.
+	UPROPERTY(Transient)
+	TObjectPtr<UInstancedStaticMeshComponent> Ground;
 
 	UPROPERTY(Transient) TObjectPtr<AActor> RenderActor;
 	UPROPERTY(Transient) TObjectPtr<UStaticMesh> CubeMesh;
-	UPROPERTY(Transient) TObjectPtr<UMaterialInterface> BaseMaterial;
 
-	// MAX forces the first build (revision 0 = empty grid still needs its
-	// initial clear).
+	// MAX forces the first build.
 	uint64 LastRevision = MAX_uint64;
 };

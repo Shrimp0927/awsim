@@ -38,9 +38,8 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UEconomySubsystem> Economy;
 
-	// Moves toward serviced housing capacity over time rather than jumping;
-	// authoritative saved state.
-	UPROPERTY() float Count = 0.f; // a new city starts empty
+	// Grows toward serviced housing capacity over time; authoritative saved state.
+	UPROPERTY() float Count = 0.f;
 
 	float BaseGrowthSpeed = 0.1f; // fraction of the gap closed per second
 };

@@ -23,8 +23,7 @@ public:
 	// Raw housing capacity: signed sum of Housing effects across all islands.
 	float GetCapacity() const { return Capacity; }
 
-	// Only islands serviced by BOTH energy and water contribute; population
-	// grows toward this, not raw capacity.
+	// Only islands serviced by BOTH energy and water; population grows toward this.
 	float GetServicedCapacity() const { return ServicedCapacity; }
 
 	// Daily tax owed by serviced homes, deposited on day rollover.
@@ -63,4 +62,8 @@ private:
 	float TaxRevenue = 0.f;
 
 	int32 LastSettledDay = INDEX_NONE;
+
+	// Grid revisions the cached totals were computed from (see Step).
+	uint64 LastContentRevision = MAX_uint64;
+	uint64 LastSliderRevision = MAX_uint64;
 };

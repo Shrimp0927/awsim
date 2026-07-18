@@ -8,58 +8,15 @@
 
 namespace
 {
-	struct FGridLayerStyle
+	FQuat FacingRotation(EPlaceableDirection Facing)
 	{
-		const TCHAR* Name;
-		FLinearColor Color;
-		float Height;  // in tiles: 1 = one cube (TileSize) tall
-		float Inset;   // XY shrink so neighbours read as separate boxes
-	};
-
-	// Connectors first, then buildings addressed by EDomain value (pure
-	// consumers fall under None).
-	constexpr int32 RoadLayer = 0;
-	constexpr int32 UtilEnergyLayer = 1;
-	constexpr int32 UtilWaterLayer = 2;
-	constexpr int32 BuildingLayerBase = 3;
-	constexpr int32 GroundLayer = 8; // after the EDomain-indexed building layers
-
-	const FGridLayerStyle GridLayerStyles[] =
-	{
-		{ TEXT("Roads"),            FLinearColor(0.15f, 0.15f, 0.15f), 0.05f, 0.98f },
-		{ TEXT("PowerLines"),       FLinearColor(0.9f, 0.5f, 0.1f),    0.08f, 0.5f },
-		{ TEXT("Pipes"),            FLinearColor(0.1f, 0.6f, 0.8f),    0.08f, 0.5f },
-		{ TEXT("Buildings"),        FLinearColor(0.55f, 0.55f, 0.55f), 1.0f,  0.9f }, // EDomain::None
-		{ TEXT("HousingBuildings"), FLinearColor(0.2f, 0.75f, 0.25f),  1.0f,  0.9f },
-		{ TEXT("EconomyBuildings"), FLinearColor(0.25f, 0.4f, 0.95f),  1.3f,  0.9f },
-		{ TEXT("EnergyBuildings"),  FLinearColor(1.0f, 0.55f, 0.1f),   1.6f,  0.9f },
-		{ TEXT("WaterBuildings"),   FLinearColor(0.1f, 0.7f, 0.9f),    1.6f,  0.9f },
-		{ TEXT("Ground"),           FLinearColor(0.07f, 0.11f, 0.07f), 1.f,   1.f },
-	};
-	constexpr int32 NumGridLayers = UE_ARRAY_COUNT(GridLayerStyles);
-
-	EDomain DominantProducedDomain(const UPlaceableDef* Def)
-	{
-		if (!Def) return EDomain::None;
-		TMap<EDomain, float> Totals;
-		float Best = 0.f;
-		EDomain BestDomain = EDomain::None;
-		for (const FSliderDef& Slider : Def->Sliders)
+		switch (Facing)
 		{
-			for (const FDomainEffect& Effect : Slider.Effects)
-			{
-				const float Produced = FMath::Max(0.f, FMath::Max(Effect.AmountAtMin, Effect.AmountAtMax));
-				if (Produced <= 0.f) continue;
-				float& Total = Totals.FindOrAdd(Effect.Domain);
-				Total += Produced;
-				if (Total > Best)
-				{
-					Best = Total;
-					BestDomain = Effect.Domain;
-				}
-			}
+		case EPlaceableDirection::East:  return FRotator(0.f, 90.f, 0.f).Quaternion();
+		case EPlaceableDirection::South: return FRotator(0.f, 180.f, 0.f).Quaternion();
+		case EPlaceableDirection::West:  return FRotator(0.f, 270.f, 0.f).Quaternion();
+		default:                         return FQuat::Identity;
 		}
-		return BestDomain;
 	}
 }
 
@@ -67,9 +24,7 @@ void UGridRenderSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
 
-	// Engine primitives as stand-in art; real meshes come from UPlaceableDef::Mesh later.
 	CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
-	BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	if (!CubeMesh)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GridRender: engine cube mesh not found; grid will not be drawn."));
@@ -85,7 +40,22 @@ void UGridRenderSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	RenderActor->SetRootComponent(Root);
 	Root->RegisterComponent();
 
-	Layers.SetNum(NumGridLayers);
+	MissingMeshLayer = CreateIsmComponent(CubeMesh);
+
+	// Placed once; top sits slightly above z = 0 to avoid z-fighting a map floor.
+	Ground = CreateIsmComponent(CubeMesh);
+	if (UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+	{
+		UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(BaseMaterial, Ground);
+		Mid->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.07f, 0.11f, 0.07f));
+		Ground->SetMaterial(0, Mid);
+	}
+	constexpr float TileSize = UGridSubsystem::TileSize;
+	constexpr float TopZ = 2.f;
+	constexpr float Thickness = 10.f;
+	const FVector Center(0.f, 0.f, TopZ - Thickness * 0.5f); // grid is centered on the world origin
+	const FVector Scale(UGridSubsystem::GetWidth(), UGridSubsystem::GetHeight(), Thickness / TileSize);
+	Ground->AddInstance(FTransform(FQuat::Identity, Center, Scale));
 }
 
 void UGridRenderSubsystem::Tick(float DeltaSeconds)
@@ -107,8 +77,7 @@ void UGridRenderSubsystem::Tick(float DeltaSeconds)
 
 bool UGridRenderSubsystem::IsTickable() const
 {
-	// RenderActor only exists in worlds that began play, keeping the tick out
-	// of editor-preview worlds.
+	// RenderActor gates the tick out of editor-preview worlds.
 	return RenderActor != nullptr;
 }
 
@@ -117,82 +86,84 @@ TStatId UGridRenderSubsystem::GetStatId() const
 	RETURN_QUICK_DECLARE_CYCLE_STAT(UGridRenderSubsystem, STATGROUP_Tickables);
 }
 
-UInstancedStaticMeshComponent* UGridRenderSubsystem::EnsureLayer(int32 LayerIndex)
+UInstancedStaticMeshComponent* UGridRenderSubsystem::CreateIsmComponent(UStaticMesh* Mesh)
 {
-	if (Layers[LayerIndex])
+	UInstancedStaticMeshComponent* Ism = NewObject<UInstancedStaticMeshComponent>(RenderActor);
+	Ism->SetStaticMesh(Mesh);
+	Ism->SetMobility(EComponentMobility::Movable);
+	Ism->SetCollisionEnabled(ECollisionEnabled::NoCollision); // picking comes with the input pass
+	Ism->SetupAttachment(RenderActor->GetRootComponent());
+	Ism->RegisterComponent();
+	return Ism;
+}
+
+UInstancedStaticMeshComponent* UGridRenderSubsystem::EnsureMeshLayer(UStaticMesh* Mesh)
+{
+	if (TObjectPtr<UInstancedStaticMeshComponent>* Found = MeshLayers.Find(Mesh))
 	{
-		return Layers[LayerIndex];
+		return *Found;
 	}
 
-	const FGridLayerStyle& Style = GridLayerStyles[LayerIndex];
-	UInstancedStaticMeshComponent* Layer = NewObject<UInstancedStaticMeshComponent>(RenderActor, Style.Name);
-	Layer->SetStaticMesh(CubeMesh);
-	if (BaseMaterial)
-	{
-		UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(BaseMaterial, Layer);
-		Mid->SetVectorParameterValue(TEXT("Color"), Style.Color);
-		Layer->SetMaterial(0, Mid);
-	}
-	Layer->SetMobility(EComponentMobility::Movable);
-	Layer->SetCollisionEnabled(ECollisionEnabled::NoCollision); // picking comes with the camera/input pass
-	Layer->SetupAttachment(RenderActor->GetRootComponent());
-	Layer->RegisterComponent();
-
-	Layers[LayerIndex] = Layer;
+	UInstancedStaticMeshComponent* Layer = CreateIsmComponent(Mesh);
+	MeshLayers.Add(Mesh, Layer);
 	return Layer;
 }
 
 void UGridRenderSubsystem::RebuildInstances(const UGridSubsystem& Grid)
 {
-	for (UInstancedStaticMeshComponent* Layer : Layers)
+	for (const TPair<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>>& Pair : MeshLayers)
 	{
-		if (Layer)
+		if (Pair.Value)
 		{
-			Layer->ClearInstances();
+			Pair.Value->ClearInstances();
 		}
 	}
-
-	// The engine cube is TileSize (100) units, pivot centered, so scale is in
-	// tiles and Z sits at half the box height.
-	auto AddBox = [this](int32 LayerIndex, FGridCoord Origin, FIntPoint ExtentTiles)
+	if (MissingMeshLayer)
 	{
-		constexpr float TileSize = UGridSubsystem::TileSize;
-		const FGridLayerStyle& Style = GridLayerStyles[LayerIndex];
-		const FVector Center(
-			(Origin.X + ExtentTiles.X * 0.5f) * TileSize,
-			(Origin.Y + ExtentTiles.Y * 0.5f) * TileSize,
-			Style.Height * TileSize * 0.5f);
-		const FVector Scale(ExtentTiles.X * Style.Inset, ExtentTiles.Y * Style.Inset, Style.Height);
-		EnsureLayer(LayerIndex)->AddInstance(FTransform(FQuat::Identity, Center, Scale));
-	};
-
-	// Ground slab top sits slightly above z = 0 so it cannot z-fight a map
-	// floor at zero; buildings sink imperceptibly into it.
-	{
-		constexpr float TileSize = UGridSubsystem::TileSize;
-		constexpr float TopZ = 2.f;
-		constexpr float Thickness = 10.f;
-		const FVector Center(
-			UGridSubsystem::GetWidth() * TileSize * 0.5f,
-			UGridSubsystem::GetHeight() * TileSize * 0.5f,
-			TopZ - Thickness * 0.5f);
-		const FVector Scale(UGridSubsystem::GetWidth(), UGridSubsystem::GetHeight(), Thickness / TileSize);
-		EnsureLayer(GroundLayer)->AddInstance(FTransform(FQuat::Identity, Center, Scale));
+		MissingMeshLayer->ClearInstances();
 	}
+
+	constexpr float TileSize = UGridSubsystem::TileSize;
+
+	// Def meshes are authored at world scale, pivot at the footprint's base
+	// center; mesh-less defs render as footprint-sized cubes.
+	auto AddContent = [&](const FGridCoord& Origin, const FGridContent& Content)
+	{
+		const FIntPoint Ext = UGridSubsystem::GetFootprintExtent(Content);
+		const FVector BaseCenter(
+			UGridSubsystem::WorldMinX + (Origin.X + Ext.X * 0.5f) * TileSize,
+			UGridSubsystem::WorldMinY + (Origin.Y + Ext.Y * 0.5f) * TileSize,
+			0.f);
+
+		const UPlaceableDef* Def = Content.Definition;
+		if (UStaticMesh* Mesh = Def ? Def->Mesh.LoadSynchronous() : nullptr)
+		{
+			EnsureMeshLayer(Mesh)->AddInstance(
+				FTransform(FacingRotation(Content.Facing), BaseCenter, FVector::OneVector));
+			return;
+		}
+
+		// Under ~20 tiles is sub-pixel from the whole-grid camera; the engine
+		// cube's pivot is centered, so lift by half its height.
+		constexpr float FallbackHeightTiles = 20.f;
+		const float HeightTiles = Content.Type == EPlaceableType::Building
+			? FallbackHeightTiles * 5.f : FallbackHeightTiles;
+		MissingMeshLayer->AddInstance(FTransform(
+			FQuat::Identity,
+			BaseCenter + FVector(0.f, 0.f, TileSize * HeightTiles * 0.5f),
+			FVector(Ext.X, Ext.Y, HeightTiles)));
+	};
 
 	for (const FPlacedBuilding& Building : Grid.GetBuildings())
 	{
-		const EDomain Domain = DominantProducedDomain(Building.Content.Definition);
-		AddBox(BuildingLayerBase + static_cast<int32>(Domain),
-			Building.Origin, UGridSubsystem::GetFootprintExtent(Building.Content));
+		AddContent(Building.Origin, Building.Content);
 	}
 	for (const TPair<FGridCoord, FGridContent>& Road : Grid.GetRoads())
 	{
-		AddBox(RoadLayer, Road.Key, FIntPoint(1, 1));
+		AddContent(Road.Key, Road.Value);
 	}
 	for (const TPair<FGridCoord, FGridContent>& Util : Grid.GetUtilities())
 	{
-		const EDomain Domain = Util.Value.Definition ? Util.Value.Definition->ConnectorDomain : EDomain::None;
-		AddBox(Domain == EDomain::Water ? UtilWaterLayer : UtilEnergyLayer, Util.Key, FIntPoint(1, 1));
+		AddContent(Util.Key, Util.Value);
 	}
 }
