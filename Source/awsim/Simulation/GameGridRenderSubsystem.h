@@ -25,17 +25,22 @@ public:
 	virtual bool IsTickable() const override;
 
 private:
-	UInstancedStaticMeshComponent* CreateIsmComponent(UStaticMesh* Mesh);
+	UInstancedStaticMeshComponent* CreateIsmComponent(UStaticMesh* Mesh, TOptional<FLinearColor> Color = {});
 	UInstancedStaticMeshComponent* EnsureMeshLayer(UStaticMesh* Mesh);
 	void RebuildInstances(const UGridSubsystem& Grid);
+	void UpdateHighlight(const UGridSubsystem& Grid);
 
 	// One ISM per unique def mesh; content renders whatever its def authors.
 	UPROPERTY(Transient)
 	TMap<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>> MeshLayers;
 
-	// Footprint-sized cubes for defs with no authored mesh.
+	// Mesh-less content as colored cubes, one ISM per domain category.
 	UPROPERTY(Transient)
-	TObjectPtr<UInstancedStaticMeshComponent> MissingMeshLayer;
+	TArray<TObjectPtr<UInstancedStaticMeshComponent>> CategoryLayers;
+
+	// Lighter twins of CategoryLayers; the hovered building's shell renders here.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UInstancedStaticMeshComponent>> HoverLayers;
 
 	// Stand-in flat world floor until a real map exists.
 	UPROPERTY(Transient)
@@ -43,6 +48,9 @@ private:
 
 	UPROPERTY(Transient) TObjectPtr<AActor> RenderActor;
 	UPROPERTY(Transient) TObjectPtr<UStaticMesh> CubeMesh;
+
+	// Highlighted tile rect (Area 0 = hidden); skips rebuilds while the hover holds still.
+	FIntRect LastHighlightTiles = FIntRect(0, 0, 0, 0);
 
 	// MAX forces the first build.
 	uint64 LastRevision = MAX_uint64;

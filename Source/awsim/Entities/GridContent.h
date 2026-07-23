@@ -41,8 +41,8 @@ struct FDomainEffect
 {
 	GENERATED_BODY()
 	UPROPERTY(EditAnywhere) EDomain Domain = EDomain::None;
-	UPROPERTY(EditAnywhere) float AmountAtMin = 0.f; // signed value
-	UPROPERTY(EditAnywhere) float AmountAtMax = 0.f; // signed value
+	UPROPERTY(EditAnywhere) float AmountAtMin = 0.f; // signed, per footprint tile
+	UPROPERTY(EditAnywhere) float AmountAtMax = 0.f; // signed, per footprint tile
 };
 
 USTRUCT()
@@ -60,12 +60,16 @@ class UPlaceableDef : public UPrimaryDataAsset
 {
 	GENERATED_BODY()
 public:
+	// Height ceiling; the grid clamps to it so picking can bound its search window.
+	static constexpr float MaxHeightTiles = 100.f;
+
 	UPROPERTY(EditAnywhere) EPlaceableType Type = EPlaceableType::None;
 	UPROPERTY(EditAnywhere) float Cost = 0.f; // placement price, paid from player funds
 	UPROPERTY(EditAnywhere) float DailyMaintenanceCost = 0.f; // daily upkeep
 	UPROPERTY(EditAnywhere) TSoftObjectPtr<UStaticMesh> Mesh;
 	UPROPERTY(EditAnywhere) TArray<FSliderDef> Sliders;
 	UPROPERTY(EditAnywhere) FIntPoint Dimensions = {1, 1}; // The width x len when facing North
+	UPROPERTY(EditAnywhere) float HeightTiles = MaxHeightTiles; // max grown height in tiles; buildings start at 1 floor
 	UPROPERTY(EditAnywhere) EDomain ConnectorDomain = EDomain::None; // For Utility connectors: Energy = power line, Water = pipe
 };
 
@@ -82,7 +86,7 @@ struct FGridContent
 	UPROPERTY() TArray<float> SliderValues;
 };
 
-// Signed contribution for a domain, interpolated by each slider's live per-instance value (falling back to the def's authored default).
+// Signed domain contribution: slider-interpolated per-tile rates x footprint area.
 inline float DomainAmount(const FGridContent& Content, EDomain InDomain)
 {
 	if (!Content.Definition) return 0.f;
@@ -102,7 +106,7 @@ inline float DomainAmount(const FGridContent& Content, EDomain InDomain)
 			}
 		}
 	}
-	return Total;
+	return Total * Content.Definition->Dimensions.X * Content.Definition->Dimensions.Y;
 }
 
 inline bool DefHasDomain(const UPlaceableDef* Def, EDomain InDomain)
@@ -113,6 +117,23 @@ inline bool DefHasDomain(const UPlaceableDef* Def, EDomain InDomain)
 		for (const FDomainEffect& Effect : Slider.Effects)
 		{
 			if (Effect.Domain == InDomain) return true;
+		}
+	}
+	return false;
+}
+
+// Type-level (not slider-level): true when the def can push the domain positive.
+inline bool DefProducesDomain(const UPlaceableDef* Def, EDomain InDomain)
+{
+	if (!Def || InDomain == EDomain::None) return false;
+	for (const FSliderDef& Slider : Def->Sliders)
+	{
+		for (const FDomainEffect& Effect : Slider.Effects)
+		{
+			if (Effect.Domain == InDomain && (Effect.AmountAtMin > 0.f || Effect.AmountAtMax > 0.f))
+			{
+				return true;
+			}
 		}
 	}
 	return false;

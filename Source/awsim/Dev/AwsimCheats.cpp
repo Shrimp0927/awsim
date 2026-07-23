@@ -17,13 +17,14 @@
 
 namespace
 {
-	// Effects run AmountAtMin = 0.5x .. AmountAtMax = 1x so slider edits are visible in the stats overlay.
-	UPlaceableDef* MakeDevDef(const TCHAR* Name, const TArray<TPair<EDomain, float>>& Effects, float Cost, float DailyMaintenance, FIntPoint Dimensions)
+	// Amounts are per tile; AmountAtMin = 0.5x max so slider edits are visible.
+	UPlaceableDef* MakeDevDef(const TCHAR* Name, const TArray<TPair<EDomain, float>>& Effects, float Cost, float DailyMaintenance, FIntPoint Dimensions, float HeightTiles)
 	{
 		UPlaceableDef* Def = NewObject<UPlaceableDef>(GetTransientPackage(),
 			MakeUniqueObjectName(GetTransientPackage(), UPlaceableDef::StaticClass(), Name));
 		Def->Type = EPlaceableType::Building;
 		Def->Dimensions = Dimensions;
+		Def->HeightTiles = HeightTiles;
 		Def->Cost = Cost;
 		Def->DailyMaintenanceCost = DailyMaintenance;
 		FSliderDef Slider;
@@ -40,11 +41,11 @@ namespace
 		return Def;
 	}
 
-	// Multi-tile footprints so buildings are visible from the whole-grid camera.
-	UPlaceableDef* HomeDef()       { return MakeDevDef(TEXT("Home"), {{EDomain::Housing, 10.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}, 100.f, 1.f, FIntPoint(6, 6)); }
-	UPlaceableDef* PowerDef()      { return MakeDevDef(TEXT("PowerPlant"), {{EDomain::Energy, 100.f}}, 500.f, 20.f, FIntPoint(10, 10)); }
-	UPlaceableDef* WaterPlantDef() { return MakeDevDef(TEXT("WaterPlant"), {{EDomain::Water, 100.f}}, 500.f, 15.f, FIntPoint(10, 10)); }
-	UPlaceableDef* BusinessDef()   { return MakeDevDef(TEXT("Business"), {{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}}, 200.f, 5.f, FIntPoint(8, 8)); }
+	// Building-like proportions; rates are per tile (a 6x6 home houses 18).
+	UPlaceableDef* HomeDef()       { return MakeDevDef(TEXT("Home"), {{EDomain::Housing, 0.5f}, {EDomain::Energy, -0.1f}, {EDomain::Water, -0.1f}}, 100.f, 1.f, FIntPoint(6, 6), 8.f); }
+	UPlaceableDef* PowerDef()      { return MakeDevDef(TEXT("PowerPlant"), {{EDomain::Energy, 2.f}}, 500.f, 20.f, FIntPoint(10, 10), 12.f); }
+	UPlaceableDef* WaterPlantDef() { return MakeDevDef(TEXT("WaterPlant"), {{EDomain::Water, 2.f}}, 500.f, 15.f, FIntPoint(10, 10), 10.f); }
+	UPlaceableDef* BusinessDef()   { return MakeDevDef(TEXT("Business"), {{EDomain::Economy, 1.f}, {EDomain::Energy, -0.2f}}, 200.f, 5.f, FIntPoint(8, 8), 45.f); }
 
 	bool ParseCoord(const TArray<FString>& Args, FGridCoord& Out)
 	{
@@ -82,7 +83,7 @@ namespace
 
 static FAutoConsoleCommandWithWorldAndArgs GCmdPlaceHome(
 	TEXT("awsim.PlaceHome"),
-	TEXT("awsim.PlaceHome <X> <Y> — queue a home (housing +10, needs energy + water)."),
+	TEXT("awsim.PlaceHome <X> <Y> — queue a home (housing +18, needs energy + water)."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		FGridCoord At;
@@ -91,7 +92,7 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdPlaceHome(
 
 static FAutoConsoleCommandWithWorldAndArgs GCmdPlacePower(
 	TEXT("awsim.PlacePower"),
-	TEXT("awsim.PlacePower <X> <Y> — queue a power plant (energy +100)."),
+	TEXT("awsim.PlacePower <X> <Y> — queue a power plant (energy +200)."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		FGridCoord At;
@@ -100,7 +101,7 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdPlacePower(
 
 static FAutoConsoleCommandWithWorldAndArgs GCmdPlaceWaterPlant(
 	TEXT("awsim.PlaceWaterPlant"),
-	TEXT("awsim.PlaceWaterPlant <X> <Y> — queue a water plant (water +100)."),
+	TEXT("awsim.PlaceWaterPlant <X> <Y> — queue a water plant (water +200)."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		FGridCoord At;
@@ -109,7 +110,7 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdPlaceWaterPlant(
 
 static FAutoConsoleCommandWithWorldAndArgs GCmdPlaceBusiness(
 	TEXT("awsim.PlaceBusiness"),
-	TEXT("awsim.PlaceBusiness <X> <Y> — queue a business (economy +50, needs energy)."),
+	TEXT("awsim.PlaceBusiness <X> <Y> — queue a business (economy +64, needs energy)."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		FGridCoord At;
@@ -318,12 +319,17 @@ static FAutoConsoleCommandWithWorldAndArgs GCmdSpawnHeavyCity(
 			RoadRows.Add(i * H / 9);
 		}
 
-		// 6x6 variants of the dev defs; two homes per cycle so housing dominates.
-		UPlaceableDef* Home = MakeDevDef(TEXT("HeavyHome"), {{EDomain::Housing, 10.f}, {EDomain::Energy, -5.f}, {EDomain::Water, -5.f}}, 100.f, 1.f, FIntPoint(Side, Side));
-		UPlaceableDef* Business = MakeDevDef(TEXT("HeavyBusiness"), {{EDomain::Economy, 50.f}, {EDomain::Energy, -5.f}}, 200.f, 5.f, FIntPoint(Side, Side));
-		UPlaceableDef* Power = MakeDevDef(TEXT("HeavyPower"), {{EDomain::Energy, 100.f}}, 500.f, 20.f, FIntPoint(Side, Side));
-		UPlaceableDef* Water = MakeDevDef(TEXT("HeavyWater"), {{EDomain::Water, 100.f}}, 500.f, 15.f, FIntPoint(Side, Side));
-		UPlaceableDef* Cycle[] = {Home, Business, Home, Power, Water};
+		// 6x6 variants with varied skyline heights; homes dominate the cycle.
+		const TArray<TPair<EDomain, float>> HomeFx = {{EDomain::Housing, 0.5f}, {EDomain::Energy, -0.1f}, {EDomain::Water, -0.1f}};
+		const TArray<TPair<EDomain, float>> BizFx = {{EDomain::Economy, 1.f}, {EDomain::Energy, -0.2f}};
+		UPlaceableDef* HomeLow = MakeDevDef(TEXT("HeavyHomeLow"), HomeFx, 100.f, 1.f, FIntPoint(Side, Side), 6.f);
+		UPlaceableDef* HomeMid = MakeDevDef(TEXT("HeavyHomeMid"), HomeFx, 100.f, 1.f, FIntPoint(Side, Side), 14.f);
+		UPlaceableDef* HomeTower = MakeDevDef(TEXT("HeavyHomeTower"), HomeFx, 100.f, 1.f, FIntPoint(Side, Side), 22.f);
+		UPlaceableDef* Business = MakeDevDef(TEXT("HeavyBusiness"), BizFx, 200.f, 5.f, FIntPoint(Side, Side), 35.f);
+		UPlaceableDef* BizTower = MakeDevDef(TEXT("HeavyBusinessTower"), BizFx, 200.f, 5.f, FIntPoint(Side, Side), 55.f);
+		UPlaceableDef* Power = MakeDevDef(TEXT("HeavyPower"), {{EDomain::Energy, 2.f}}, 500.f, 20.f, FIntPoint(Side, Side), 12.f);
+		UPlaceableDef* Water = MakeDevDef(TEXT("HeavyWater"), {{EDomain::Water, 2.f}}, 500.f, 15.f, FIntPoint(Side, Side), 10.f);
+		UPlaceableDef* Cycle[] = {HomeLow, Business, HomeMid, Power, HomeTower, BizTower, HomeLow, Water};
 
 		float TotalCost = 0.f;
 		int32 Slots = 0, Queued = 0;

@@ -75,23 +75,6 @@ namespace
 		}
 	}
 
-	// Type-level (not slider-level) so tuning a slider never changes island shape.
-	bool DefProducesDomain(const UPlaceableDef* Def, EDomain Domain)
-	{
-		if (!Def || Domain == EDomain::None) return false;
-		for (const FSliderDef& Slider : Def->Sliders)
-		{
-			for (const FDomainEffect& Effect : Slider.Effects)
-			{
-				if (Effect.Domain == Domain && (Effect.AmountAtMin > 0.f || Effect.AmountAtMax > 0.f))
-				{
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-
 	int32 DsuFind(TArray<int32>& Parent, int32 I)
 	{
 		while (Parent[I] != I) { Parent[I] = Parent[Parent[I]]; I = Parent[I]; }
@@ -156,7 +139,56 @@ void UGridSubsystem::Step(float StepSeconds)
 	}
 	PendingPlacements.Reset();
 
+	if (StepSeconds > 0.f)
+	{
+		GrowBuildings(); // paused pumps (dt = 0) don't age buildings
+	}
+
 	EnsureIslands();
+}
+
+void UGridSubsystem::GrowBuildings()
+{
+	TArray<FGridCoord> FullyGrown;
+	for (TPair<FGridCoord, uint8>& Clock : LifetimeAt)
+	{
+		if (++Clock.Value <= StepsPerFloor)
+		{
+			continue;
+		}
+		Clock.Value = 1; // rolled over: add a floor and restart
+
+		const int32* Idx = BuildingAt.Find(Clock.Key);
+		if (!Idx)
+		{
+			FullyGrown.Add(Clock.Key);
+			continue;
+		}
+		FPlacedBuilding& Building = Buildings[*Idx];
+		const UPlaceableDef* Def = Building.Content.Definition;
+		const int32 MaxHeight = Def
+			? static_cast<int32>(FMath::Clamp(Def->HeightTiles, 1.f, UPlaceableDef::MaxHeightTiles)) : 1;
+		Building.HeightTiles = FMath::Min(Building.HeightTiles + 1, MaxHeight);
+		for (const FGridCoord& T : FootprintTiles(Building.Origin, Building.Content))
+		{
+			HeightAt[T.Y * GridWidth + T.X] = Building.HeightTiles;
+		}
+		++ContentRevision; // taller now: rendering and picking see the new column
+		if (Building.HeightTiles >= MaxHeight)
+		{
+			FullyGrown.Add(Clock.Key);
+		}
+	}
+	for (const FGridCoord& Key : FullyGrown)
+	{
+		LifetimeAt.Remove(Key);
+	}
+}
+
+uint8 UGridSubsystem::GetLifetime(FGridCoord Origin) const
+{
+	const uint8* Clock = LifetimeAt.Find(Origin);
+	return Clock ? *Clock : 0;
 }
 
 void UGridSubsystem::QueuePlacement(FGridCoord Tile, FGridContent Content)
@@ -206,6 +238,98 @@ bool UGridSubsystem::IsTileOccupied(FGridCoord Tile) const
 	return Roads.Contains(Tile) || Utilities.Contains(Tile) || BuildingAt.Contains(Tile);
 }
 
+bool UGridSubsystem::PickGroundTile(const FVector& RayOrigin, const FVector& RayDir, FGridCoord& OutTile) const
+{
+	if (RayDir.Z >= 0.f)
+	{
+		return false;
+	}
+	const FVector Ground = RayOrigin - RayDir * (RayOrigin.Z / RayDir.Z);
+	OutTile = FGridCoord(
+		FMath::FloorToInt32((Ground.X - WorldMinX) / TileSize),
+		FMath::FloorToInt32((Ground.Y - WorldMinY) / TileSize));
+	return IsInBounds(OutTile);
+}
+
+bool UGridSubsystem::PickTile(const FVector& RayOrigin, const FVector& RayDir, FGridCoord& OutTile) const
+{
+	if (RayDir.Z >= 0.f)
+	{
+		return false;
+	}
+
+	const auto TileOf = [](const FVector& P)
+	{
+		return FGridCoord(
+			FMath::FloorToInt32((P.X - WorldMinX) / TileSize),
+			FMath::FloorToInt32((P.Y - WorldMinY) / TileSize));
+	};
+
+	const float GroundT = -RayOrigin.Z / RayDir.Z;
+	const FGridCoord GroundTile = TileOf(RayOrigin + RayDir * GroundT);
+
+	if (HeightAt.Num() > 0)
+	{
+		// 2D DDA from where the ray first dips under MaxHeightTiles down to the ground point.
+		const float MaxZ = UPlaceableDef::MaxHeightTiles * TileSize;
+		const float StartT = FMath::Max((MaxZ - RayOrigin.Z) / RayDir.Z, 0.f);
+		FGridCoord Tile = TileOf(RayOrigin + RayDir * StartT);
+
+		const int32 StepX = RayDir.X > KINDA_SMALL_NUMBER ? 1 : (RayDir.X < -KINDA_SMALL_NUMBER ? -1 : 0);
+		const int32 StepY = RayDir.Y > KINDA_SMALL_NUMBER ? 1 : (RayDir.Y < -KINDA_SMALL_NUMBER ? -1 : 0);
+		const auto BoundaryT = [&](float Origin, float Dir, float Min, int32 Cell, int32 Step)
+		{
+			if (Step == 0) return UE_BIG_NUMBER;
+			const float Edge = Min + (Cell + (Step > 0 ? 1 : 0)) * TileSize;
+			return (Edge - Origin) / Dir;
+		};
+		float NextX = BoundaryT(RayOrigin.X, RayDir.X, WorldMinX, Tile.X, StepX);
+		float NextY = BoundaryT(RayOrigin.Y, RayDir.Y, WorldMinY, Tile.Y, StepY);
+
+		while (true)
+		{
+			// A column catches the ray iff its top reaches the ray's exit altitude.
+			const float ExitT = FMath::Min3(NextX, NextY, GroundT);
+			const float ExitZ = RayOrigin.Z + RayDir.Z * ExitT;
+			const float Height = GetHeightAt(Tile) * TileSize;
+			if (Height > 0.f && Height >= ExitZ)
+			{
+				OutTile = Tile;
+				return true;
+			}
+			if (ExitT >= GroundT)
+			{
+				break;
+			}
+			if (NextX < NextY)
+			{
+				Tile.X += StepX;
+				NextX += TileSize / FMath::Abs(RayDir.X);
+			}
+			else
+			{
+				Tile.Y += StepY;
+				NextY += TileSize / FMath::Abs(RayDir.Y);
+			}
+		}
+	}
+
+	OutTile = GroundTile;
+	return IsInBounds(GroundTile);
+}
+
+const FPlacedBuilding* UGridSubsystem::FindBuildingAt(FGridCoord Tile) const
+{
+	const int32* Idx = BuildingAt.Find(Tile);
+	return Idx ? &Buildings[*Idx] : nullptr;
+}
+
+float UGridSubsystem::GetHeightAt(FGridCoord Tile) const
+{
+	const int32 Index = Tile.Y * GridWidth + Tile.X;
+	return IsInBounds(Tile) && HeightAt.IsValidIndex(Index) ? HeightAt[Index] : 0.f;
+}
+
 const FGridContent& UGridSubsystem::GetContentAt(FGridCoord Tile) const
 {
 	static const FGridContent Empty;
@@ -251,13 +375,13 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 		}
 	}
 
-	// Seed slider values from authored defaults unless the caller supplied a full set.
+	// Placements start at full operation unless the caller supplied a full set.
 	if (Content.Definition && Content.SliderValues.Num() != Content.Definition->Sliders.Num())
 	{
 		Content.SliderValues.Reset(Content.Definition->Sliders.Num());
 		for (const FSliderDef& Slider : Content.Definition->Sliders)
 		{
-			Content.SliderValues.Add(Slider.Value);
+			Content.SliderValues.Add(Slider.Range.Max);
 		}
 	}
 
@@ -278,6 +402,17 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 		Placed.Content = Content;
 		const int32 Idx = Buildings.Add(MoveTemp(Placed));
 		for (const FGridCoord& T : Tiles) BuildingAt.Add(T, Idx);
+
+		if (HeightAt.Num() == 0) HeightAt.SetNumZeroed(GridWidth * GridHeight);
+		for (const FGridCoord& T : Tiles) HeightAt[T.Y * GridWidth + T.X] = 1.f; // one floor at placement
+
+		const UPlaceableDef* Def = Buildings[Idx].Content.Definition;
+		const int32 MaxHeight = Def
+			? static_cast<int32>(FMath::Clamp(Def->HeightTiles, 1.f, UPlaceableDef::MaxHeightTiles)) : 1;
+		if (MaxHeight > 1)
+		{
+			LifetimeAt.Add(Tile, 1); // growth clock starts ticking
+		}
 		break;
 	}
 	}
@@ -289,9 +424,11 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 
 void UGridSubsystem::RemoveBuildingAt(int32 Index)
 {
+	LifetimeAt.Remove(Buildings[Index].Origin);
 	for (const FGridCoord& T : FootprintTiles(Buildings[Index].Origin, Buildings[Index].Content))
 	{
 		BuildingAt.Remove(T);
+		if (HeightAt.Num() > 0) HeightAt[T.Y * GridWidth + T.X] = 0.f;
 	}
 
 	Buildings.RemoveAtSwap(Index);

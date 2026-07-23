@@ -15,6 +15,9 @@ struct FPlacedBuilding
 
 	UPROPERTY() FGridCoord Origin;
 	UPROPERTY() FGridContent Content;
+
+	// Grown height in tiles; starts at 1, +1 per lifetime rollover up to the def max.
+	UPROPERTY() int32 HeightTiles = 1;
 };
 
 UCLASS()
@@ -50,6 +53,21 @@ public:
 	bool IsTileOccupied(FGridCoord Tile) const;
 	// Reference stays valid only until the next grid mutation; copy to keep.
 	const FGridContent& GetContentAt(FGridCoord Tile) const;
+
+	// Grown height of the building covering Tile; 0 for empty, roads, utilities.
+	float GetHeightAt(FGridCoord Tile) const;
+
+	// Sim steps per grown floor; a building's clock counts 1..StepsPerFloor.
+	static constexpr uint8 StepsPerFloor = 100;
+
+	// Growth clock for a building origin; 0 once fully grown or not a building.
+	uint8 GetLifetime(FGridCoord Origin) const;
+
+	// First building column the down-going ray hits, else the ground tile; false off-grid.
+	bool PickTile(const FVector& RayOrigin, const FVector& RayDir, FGridCoord& OutTile) const;
+
+	// Where the ray meets z = 0, ignoring buildings (marquee select); false off-grid.
+	bool PickGroundTile(const FVector& RayOrigin, const FVector& RayDir, FGridCoord& OutTile) const;
 	bool SetContent(FGridCoord Tile, FGridContent Content);
 
 	// Def Dimensions rotated by Facing; the single footprint authority.
@@ -64,6 +82,9 @@ public:
 
 	// Injectable for world-less specs; resolved from the owning world when unset.
 	void SetFunds(UGamePlayerFundsSubsystem* InFunds) { Funds = InFunds; }
+
+	// Building covering Tile, or null; pointer valid until the next grid mutation.
+	const FPlacedBuilding* FindBuildingAt(FGridCoord Tile) const;
 
 	const TArray<FPlacedBuilding>& GetBuildings() const { return Buildings; }
 	const TMap<FGridCoord, FGridContent>& GetRoads() const { return Roads; }
@@ -82,6 +103,7 @@ private:
 	void EnsureNetworks() const;
 	void EnsureIslands() const;
 	void RebuildIslands() const;
+	void GrowBuildings();
 	void RemoveBuildingAt(int32 Index);
 	UGamePlayerFundsSubsystem* ResolveFunds() const;
 
@@ -103,6 +125,13 @@ private:
 
 	// Reverse index: every covered tile -> index into Buildings.
 	TMap<FGridCoord, int32> BuildingAt;
+
+	// Column heights, row-major GridWidth x GridHeight; allocated on the first building.
+	TArray<float> HeightAt;
+
+	// Growth clocks keyed by building origin; fully grown buildings drop out.
+	UPROPERTY()
+	TMap<FGridCoord, uint8> LifetimeAt;
 
 	// Cached connector networks (tile -> network id); UtilDomain[id] is that network's domain.
 	mutable TMap<FGridCoord, int32> RoadNet;

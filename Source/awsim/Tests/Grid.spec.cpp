@@ -70,6 +70,23 @@ BEGIN_DEFINE_SPEC(FGridSpec, "awsim.Simulation.Grid",
 		return Grid->SetContent(At, MakeContent(EPlaceableType::Utility, MakeDef(EPlaceableType::Utility, FIntPoint(1, 1), Domain), EPlaceableDirection::None));
 	}
 
+	// A ray through the center of GroundTile at the camera's -60 pitch, looking -Y
+	// (default orientation: the camera sits at +Y of what it looks at).
+	void MakeRay(FGridCoord GroundTile, FVector& OutOrigin, FVector& OutDir)
+	{
+		const FVector Target(
+			UGridSubsystem::WorldMinX + (GroundTile.X + 0.5f) * UGridSubsystem::TileSize,
+			UGridSubsystem::WorldMinY + (GroundTile.Y + 0.5f) * UGridSubsystem::TileSize,
+			0.f);
+		OutDir = FVector(0.f, -0.5f, -FMath::Sin(FMath::DegreesToRadians(60.f)));
+		OutOrigin = Target - OutDir * 40000.f;
+	}
+
+	void StepGrid(int32 Steps)
+	{
+		for (int32 i = 0; i < Steps; ++i) Grid->Step(1.f / 30.f);
+	}
+
 	bool SameIsland(FGridCoord A, FGridCoord B)
 	{
 		for (const TArray<FGridCoord>& Island : Grid->GetIslands())
@@ -103,12 +120,133 @@ void FGridSpec::Define()
 		});
 	});
 
+	Describe("Column heights", [this]()
+	{
+		It("stamps one floor across the footprint on placement and clears on removal", [this]()
+		{
+			UPlaceableDef* Def = MakeDef(EPlaceableType::Building, FIntPoint(2, 2), EDomain::None);
+			Def->HeightTiles = 30.f;
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(5, 5), MakeContent(EPlaceableType::Building, Def, EPlaceableDirection::North)));
+			TestEqual(TEXT("origin"), Grid->GetHeightAt(FGridCoord(5, 5)), 1.f);
+			TestEqual(TEXT("far corner"), Grid->GetHeightAt(FGridCoord(6, 6)), 1.f);
+			TestEqual(TEXT("outside footprint"), Grid->GetHeightAt(FGridCoord(7, 7)), 0.f);
+
+			Grid->SetContent(FGridCoord(6, 6), FGridContent());
+			TestEqual(TEXT("cleared"), Grid->GetHeightAt(FGridCoord(5, 5)), 0.f);
+		});
+
+		It("grows one floor per lifetime cycle, then leaves the clock", [this]()
+		{
+			UPlaceableDef* Def = MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None);
+			Def->HeightTiles = 3.f;
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(5, 5), MakeContent(EPlaceableType::Building, Def, EPlaceableDirection::North)));
+			TestEqual(TEXT("clock starts at 1"), static_cast<int32>(Grid->GetLifetime(FGridCoord(5, 5))), 1);
+
+			StepGrid(UGridSubsystem::StepsPerFloor);
+			TestEqual(TEXT("second floor"), Grid->GetHeightAt(FGridCoord(5, 5)), 2.f);
+			StepGrid(UGridSubsystem::StepsPerFloor);
+			TestEqual(TEXT("third floor"), Grid->GetHeightAt(FGridCoord(5, 5)), 3.f);
+			TestEqual(TEXT("fully grown drops off the clock"), static_cast<int32>(Grid->GetLifetime(FGridCoord(5, 5))), 0);
+			StepGrid(UGridSubsystem::StepsPerFloor);
+			TestEqual(TEXT("stays at max"), Grid->GetHeightAt(FGridCoord(5, 5)), 3.f);
+		});
+
+		It("does not age on paused pumps (dt = 0)", [this]()
+		{
+			UPlaceableDef* Def = MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None);
+			Def->HeightTiles = 2.f;
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(5, 5), MakeContent(EPlaceableType::Building, Def, EPlaceableDirection::North)));
+			for (int32 i = 0; i < 3; ++i) Grid->Step(0.f);
+			TestEqual(TEXT("clock unmoved"), static_cast<int32>(Grid->GetLifetime(FGridCoord(5, 5))), 1);
+			TestEqual(TEXT("height unmoved"), Grid->GetHeightAt(FGridCoord(5, 5)), 1.f);
+		});
+
+		It("keeps roads and out-of-bounds tiles flat", [this]()
+		{
+			PlaceRoad(FGridCoord(3, 3));
+			TestEqual(TEXT("road"), Grid->GetHeightAt(FGridCoord(3, 3)), 0.f);
+			TestEqual(TEXT("out of bounds"), Grid->GetHeightAt(FGridCoord(-1, 0)), 0.f);
+		});
+	});
+
+	Describe("Cursor picking", [this]()
+	{
+		It("picks the ground tile when nothing occludes the ray", [this]()
+		{
+			FVector Origin, Dir;
+			MakeRay(FGridCoord(10, 13), Origin, Dir);
+			FGridCoord Picked;
+			TestTrue(TEXT("picked"), Grid->PickTile(Origin, Dir, Picked));
+			TestEqual(TEXT("tile"), Picked, FGridCoord(10, 13));
+		});
+
+		It("picks a tall building that blocks the ray before the ground tile", [this]()
+		{
+			UPlaceableDef* Tall = MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None);
+			Tall->HeightTiles = 5.f;
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(10, 15), MakeContent(EPlaceableType::Building, Tall, EPlaceableDirection::North))); // camera-side of (10, 13)
+			StepGrid(4 * UGridSubsystem::StepsPerFloor); // grow to 5 tiles; the ray passes ~2.6 tiles up
+			FVector Origin, Dir;
+			MakeRay(FGridCoord(10, 13), Origin, Dir);
+			FGridCoord Picked;
+			TestTrue(TEXT("picked"), Grid->PickTile(Origin, Dir, Picked));
+			TestEqual(TEXT("occluder wins"), Picked, FGridCoord(10, 15));
+		});
+
+		It("marches over a building too short to reach the ray", [this]()
+		{
+			UPlaceableDef* Short = MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None);
+			Short->HeightTiles = 2.f; // even fully grown, the ray passes ~2.6 tiles up
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(10, 15), MakeContent(EPlaceableType::Building, Short, EPlaceableDirection::North)));
+			StepGrid(UGridSubsystem::StepsPerFloor); // fully grown at 2 tiles
+			FVector Origin, Dir;
+			MakeRay(FGridCoord(10, 13), Origin, Dir);
+			FGridCoord Picked;
+			TestTrue(TEXT("picked"), Grid->PickTile(Origin, Dir, Picked));
+			TestEqual(TEXT("ground wins"), Picked, FGridCoord(10, 13));
+		});
+
+		It("ground pick ignores occluding buildings", [this]()
+		{
+			UPlaceableDef* Tall = MakeDef(EPlaceableType::Building, FIntPoint(1, 1), EDomain::None);
+			Tall->HeightTiles = 5.f;
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(10, 15), MakeContent(EPlaceableType::Building, Tall, EPlaceableDirection::North)));
+			StepGrid(4 * UGridSubsystem::StepsPerFloor); // tall enough to occlude (10, 13) for PickTile
+			FVector Origin, Dir;
+			MakeRay(FGridCoord(10, 13), Origin, Dir);
+			FGridCoord Picked;
+			TestTrue(TEXT("picked"), Grid->PickGroundTile(Origin, Dir, Picked));
+			TestEqual(TEXT("plane tile"), Picked, FGridCoord(10, 13));
+		});
+
+		It("returns false for a ray landing off-grid with no occluder", [this]()
+		{
+			FVector Origin, Dir;
+			MakeRay(FGridCoord(10, -20), Origin, Dir);
+			FGridCoord Picked;
+			TestFalse(TEXT("off-grid"), Grid->PickTile(Origin, Dir, Picked));
+		});
+	});
+
 	Describe("Placement", [this]()
 	{
 		It("places a building on an empty, in-bounds tile", [this]()
 		{
 			TestTrue(TEXT("placed"), PlaceBuilding(FGridCoord(5, 5)));
 			TestTrue(TEXT("occupied"), Grid->IsTileOccupied(FGridCoord(5, 5)));
+		});
+
+		It("finds the covering building from any footprint tile", [this]()
+		{
+			UPlaceableDef* Def = MakeDef(EPlaceableType::Building, FIntPoint(2, 2), EDomain::None);
+			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(5, 5), MakeContent(EPlaceableType::Building, Def, EPlaceableDirection::North)));
+			const FPlacedBuilding* Building = Grid->FindBuildingAt(FGridCoord(6, 6));
+			TestNotNull(TEXT("found"), Building);
+			if (Building)
+			{
+				TestEqual(TEXT("origin"), Building->Origin, FGridCoord(5, 5));
+			}
+			TestNull(TEXT("empty tile"), Grid->FindBuildingAt(FGridCoord(9, 9)));
 		});
 
 		It("rejects a building placed out of bounds", [this]()
@@ -178,20 +316,20 @@ void FGridSpec::Define()
 
 	Describe("Per-instance slider values", [this]()
 	{
-		It("seeds instance values from the def's authored defaults on placement", [this]()
+		It("seeds instance values at each slider's range max on placement", [this]()
 		{
 			PlaceBuilding(FGridCoord(5, 5), EPlaceableDirection::North, MakeProducerDef(EDomain::Energy));
 			const FGridContent Content = Grid->GetContentAt(FGridCoord(5, 5));
 			TestEqual(TEXT("one value per slider"), Content.SliderValues.Num(), 1);
-			TestEqual(TEXT("seeded from authored default"), Content.SliderValues[0], 0.5f);
+			TestEqual(TEXT("seeded at the range max"), Content.SliderValues[0], 1.f);
 		});
 
 		It("keeps a caller-supplied full set of values", [this]()
 		{
 			FGridContent Content = MakeContent(EPlaceableType::Building, MakeProducerDef(EDomain::Energy), EPlaceableDirection::North);
-			Content.SliderValues = { 1.f };
+			Content.SliderValues = { 0.25f };
 			TestTrue(TEXT("placed"), Grid->SetContent(FGridCoord(5, 5), Content));
-			TestEqual(TEXT("supplied value kept"), Grid->GetContentAt(FGridCoord(5, 5)).SliderValues[0], 1.f);
+			TestEqual(TEXT("supplied value kept"), Grid->GetContentAt(FGridCoord(5, 5)).SliderValues[0], 0.25f);
 		});
 
 		It("SetSliderValue writes the instance value, clamped to the slider's range", [this]()

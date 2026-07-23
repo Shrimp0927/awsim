@@ -15,7 +15,7 @@ BEGIN_DEFINE_SPEC(FEditSpec, "awsim.Simulation.Edit",
 	TStrongObjectPtr<UGridSubsystem> Grid;
 	TStrongObjectPtr<UEditSubsystem> Edit;
 
-	// A 1x1 building with one energy-consuming slider (default 0.5, range 0..1).
+	// A 1x1 building with one energy-consuming slider (seeded at max on placement, range 0..1).
 	UPlaceableDef* MakeSliderDef()
 	{
 		UPlaceableDef* Def = NewObject<UPlaceableDef>();
@@ -72,7 +72,7 @@ void FEditSpec::Define()
 			PlaceSliderBuilding(FGridCoord(5, 5));
 			Edit->QueueSliderEdit(FGridCoord(5, 5), 0, 0.9f);
 
-			TestEqual(TEXT("still the authored default"), SliderValueAt(FGridCoord(5, 5)), 0.5f);
+			TestEqual(TEXT("still the placement default (range max)"), SliderValueAt(FGridCoord(5, 5)), 1.f);
 			TestEqual(TEXT("one pending"), Edit->NumPendingEdits(), 1);
 
 			Edit->Step(0.f);

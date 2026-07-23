@@ -93,11 +93,11 @@ void FSimulationSpec::Define()
 			Sim->Tick(1.f / 30.f); // place while running
 
 			Sim->SetPaused(true);
-			Edit->QueueSliderEdit(FGridCoord(5, 5), 0, 1.f);
+			Edit->QueueSliderEdit(FGridCoord(5, 5), 0, 0.25f); // below the placement default so the edit is observable
 			Sim->Tick(1.f);
 
 			TestEqual(TEXT("edit drained"), Edit->NumPendingEdits(), 0);
-			TestEqual(TEXT("value applied"), Grid->GetContentAt(FGridCoord(5, 5)).SliderValues[0], 1.f);
+			TestEqual(TEXT("value applied"), Grid->GetContentAt(FGridCoord(5, 5)).SliderValues[0], 0.25f);
 		});
 	});
 
