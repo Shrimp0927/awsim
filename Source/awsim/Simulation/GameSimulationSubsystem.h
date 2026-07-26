@@ -25,6 +25,15 @@ public:
 	bool IsRunning() const { return bRunning; }
 
 	int32 GetDay() const { return DayCount; }
+	int32 GetStepCounter() const { return StepCounter; }
+
+	// Save/load only.
+	void RestoreClock(int32 InDay, int32 InStepCounter)
+	{
+		DayCount = FMath::Max(0, InDay);
+		StepCounter = FMath::Clamp(InStepCounter, 0, StepsPerDay - 1);
+		Accumulator = 0.f;
+	}
 
 	// Injectable phase list for world-less specs; sorted by PhaseOrder.
 	void SetPhases(const TArray<USimPhase*>& InPhases);
@@ -32,6 +41,7 @@ public:
 private:
 	void StepOnce();
 	void RebuildPhaseOrder();
+	void NotifySaveCheckpoint();
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<USimPhase>> OrderedPhases;

@@ -24,6 +24,9 @@ public:
 	void CommitDeposits();
 	float GetPendingDeposits() const { return PendingDeposits; }
 
+	// Save/load only.
+	void RestoreBalance(float InBalance) { Balance = InBalance; PendingDeposits = 0.f; }
+
 private:
 	UPROPERTY() float Balance = 0.f;
 

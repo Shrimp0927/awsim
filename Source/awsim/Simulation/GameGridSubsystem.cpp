@@ -422,6 +422,56 @@ bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 	return true;
 }
 
+void UGridSubsystem::ResetForLoad()
+{
+	Buildings.Reset();
+	Roads.Reset();
+	Utilities.Reset();
+	BuildingAt.Reset();
+	LifetimeAt.Reset();
+	PendingPlacements.Reset();
+	if (HeightAt.Num() > 0)
+	{
+		FMemory::Memzero(HeightAt.GetData(), HeightAt.Num() * sizeof(float));
+	}
+	bRoadNetDirty = bUtilNetDirty = bIslandsDirty = true;
+	++ContentRevision;
+	++SliderRevision;
+}
+
+void UGridSubsystem::RestoreBuilding(const FPlacedBuilding& Building, uint8 Lifetime)
+{
+	const int32 Idx = Buildings.Add(Building);
+	if (HeightAt.Num() == 0) HeightAt.SetNumZeroed(GridWidth * GridHeight);
+	for (const FGridCoord& T : FootprintTiles(Building.Origin, Building.Content))
+	{
+		BuildingAt.Add(T, Idx);
+		HeightAt[T.Y * GridWidth + T.X] = Building.HeightTiles;
+	}
+	if (Lifetime > 0)
+	{
+		LifetimeAt.Add(Building.Origin, Lifetime);
+	}
+	bIslandsDirty = true;
+	++ContentRevision;
+}
+
+void UGridSubsystem::RestoreConnector(FGridCoord Tile, const FGridContent& Content)
+{
+	if (Content.Type == EPlaceableType::Road)
+	{
+		Roads.Add(Tile, Content);
+		bRoadNetDirty = true;
+	}
+	else if (Content.Type == EPlaceableType::Utility)
+	{
+		Utilities.Add(Tile, Content);
+		bUtilNetDirty = true;
+	}
+	bIslandsDirty = true;
+	++ContentRevision;
+}
+
 void UGridSubsystem::RemoveBuildingAt(int32 Index)
 {
 	LifetimeAt.Remove(Buildings[Index].Origin);

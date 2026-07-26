@@ -2,6 +2,7 @@
 #include "Simulation/GameSimPhase.h"
 #include "Simulation/GamePlayerFundsSubsystem.h"
 #include "awsim.h"
+#include "Core/GameSaveSubsystem.h"
 #include "Engine/World.h"
 
 void USimulationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -9,9 +10,9 @@ void USimulationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	Super::OnWorldBeginPlay(InWorld);
 
 	RebuildPhaseOrder();
-	bRunning = true;
+	bRunning = false; // the flow subsystem starts the clock when leaving the menu
 
-	UE_LOG(LogAwsim, Log, TEXT("Simulation started with %d phase(s)."), OrderedPhases.Num());
+	UE_LOG(LogAwsim, Log, TEXT("Simulation ready with %d phase(s)."), OrderedPhases.Num());
 }
 
 void USimulationSubsystem::RebuildPhaseOrder()
@@ -67,6 +68,7 @@ void USimulationSubsystem::Tick(float DeltaSeconds)
 				Phase->Step(0.f);
 			}
 		}
+		NotifySaveCheckpoint();
 		return;
 	}
 
@@ -81,11 +83,21 @@ void USimulationSubsystem::Tick(float DeltaSeconds)
 		++Steps;
 	}
 
-	// Cap hit with debt left: drop the backlog so the sim slows down instead of
-	// every later frame paying max catch-up steps forever.
+	// Cap hit with debt left: drop the backlog so the sim slows instead of spiraling.
 	if (Accumulator >= FixedStep)
 	{
 		Accumulator = 0.f;
+	}
+
+	NotifySaveCheckpoint();
+}
+
+void USimulationSubsystem::NotifySaveCheckpoint()
+{
+	UWorld* World = GetWorld();
+	if (UGameSaveSubsystem* Save = World ? World->GetSubsystem<UGameSaveSubsystem>() : nullptr)
+	{
+		Save->NotifyStepCompleted();
 	}
 }
 

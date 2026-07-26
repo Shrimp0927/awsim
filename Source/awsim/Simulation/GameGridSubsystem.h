@@ -83,6 +83,12 @@ public:
 	// Injectable for world-less specs; resolved from the owning world when unset.
 	void SetFunds(UGamePlayerFundsSubsystem* InFunds) { Funds = InFunds; }
 
+	// Save/load: wipe all content and derived state; revisions keep counting.
+	void ResetForLoad();
+	// Direct restores that bypass validation and charging; derived state rebuilds.
+	void RestoreBuilding(const FPlacedBuilding& Building, uint8 Lifetime);
+	void RestoreConnector(FGridCoord Tile, const FGridContent& Content);
+
 	// Building covering Tile, or null; pointer valid until the next grid mutation.
 	const FPlacedBuilding* FindBuildingAt(FGridCoord Tile) const;
 

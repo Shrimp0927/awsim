@@ -9,6 +9,8 @@
 class APlayerController;
 class UInputAction;
 struct FInputActionValue;
+enum class EDomain : uint8;
+enum class EPlaceableType : uint8;
 
 // View-layer cursor state: per-frame mouse picks plus click/key intents on the
 // hovered tile. Mutates the sim only through the grid's queue APIs.
@@ -38,6 +40,18 @@ private:
 	void OnDemolish(const FInputActionValue& Value);
 	void OnSelectPressed(const FInputActionValue& Value);
 	void OnSelectReleased(const FInputActionValue& Value);
+	void OnBuildEnergy(const FInputActionValue& Value);
+	void OnBuildWater(const FInputActionValue& Value);
+	void OnBuildHome(const FInputActionValue& Value);
+	void OnBuildBusiness(const FInputActionValue& Value);
+	void OnBuildRoad(const FInputActionValue& Value);
+	void OnBuildPowerLine(const FInputActionValue& Value);
+	void OnBuildPipe(const FInputActionValue& Value);
+	void OnToggleMenu(const FInputActionValue& Value);
+	// Queue a rect-sized building of Domain; rejected unless every tile is empty.
+	void QueueBuildInRect(EDomain Domain);
+	// Queue 1x1 connectors (road/utility) filling the rect; same all-empty rule.
+	void QueueConnectorsInRect(EPlaceableType Type, EDomain Domain);
 
 	bool bHasHover = false;
 	FGridCoord HoveredTile;
@@ -52,4 +66,6 @@ private:
 	bool bInputBound = false;
 	UPROPERTY(Transient) TObjectPtr<UInputAction> DemolishAction;
 	UPROPERTY(Transient) TObjectPtr<UInputAction> SelectAction;
+	UPROPERTY(Transient) TArray<TObjectPtr<UInputAction>> BuildActions; // keys 1-7
+	UPROPERTY(Transient) TObjectPtr<UInputAction> ToggleMenuAction;
 };

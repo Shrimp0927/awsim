@@ -270,14 +270,26 @@ void UGridRenderSubsystem::RebuildInstances(const UGridSubsystem& Grid)
 			return;
 		}
 
-		// Cube pivot is centered — lift by half height; non-buildings stay squat.
-		constexpr float FallbackHeightTiles = 20.f;
-		const float HeightTiles = Content.Type == EPlaceableType::Building
-			? FMath::Max(GrownHeightTiles, 1) : FallbackHeightTiles;
-		CategoryLayers[static_cast<int32>(CategoryOf(Content))]->AddInstance(FTransform(
-			FQuat::Identity,
-			BaseCenter + FVector(0.f, 0.f, TileSize * HeightTiles * 0.5f),
-			FVector(Ext.X, Ext.Y, HeightTiles)));
+		UInstancedStaticMeshComponent* Layer = CategoryLayers[static_cast<int32>(CategoryOf(Content))];
+		if (Content.Type == EPlaceableType::Building)
+		{
+			// Cube pivot is centered — lift by half height.
+			const float HeightTiles = FMath::Max(GrownHeightTiles, 1);
+			Layer->AddInstance(FTransform(
+				FQuat::Identity,
+				BaseCenter + FVector(0.f, 0.f, TileSize * HeightTiles * 0.5f),
+				FVector(Ext.X, Ext.Y, HeightTiles)));
+		}
+		else
+		{
+			// Roads and utilities lie flat: a thin slab just above the ground plate.
+			constexpr float Thickness = 2.f;
+			constexpr float TopZ = 3.f;
+			Layer->AddInstance(FTransform(
+				FQuat::Identity,
+				BaseCenter + FVector(0.f, 0.f, TopZ - Thickness * 0.5f),
+				FVector(Ext.X, Ext.Y, Thickness / TileSize)));
+		}
 	};
 
 	for (const FPlacedBuilding& Building : Grid.GetBuildings())

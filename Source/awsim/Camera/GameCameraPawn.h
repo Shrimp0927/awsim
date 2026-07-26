@@ -43,7 +43,7 @@ private:
 	FVector2D Target = FVector2D::ZeroVector; // T: look-at point on the grid plane
 	float Distance = 40000.f;                 // d: boom length from T to the camera
 	int32 YawSteps = 0;                       // 0..3 quarter turns from the default orientation
-	static constexpr float GridPadding = UGridSubsystem::TileSize * 100.f;
+	static constexpr float GridPadding = UGridSubsystem::TileSize * 20.f;
 
 	UPROPERTY(VisibleAnywhere) TObjectPtr<UCameraComponent> Camera;
 	UPROPERTY() TObjectPtr<UInputAction> PanAction;

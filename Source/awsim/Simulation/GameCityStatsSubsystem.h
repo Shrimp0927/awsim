@@ -23,6 +23,9 @@ public:
 	int32 GetPopulation() const { return Population; }
 	float GetPlayerRating() const { return PlayerRating; }
 
+	// Save/load only.
+	void RestorePlayerRating(float Rating) { PlayerRating = Clamp(Rating); }
+
 	static float Clamp(float Rating)
 	{
 		return FMath::Clamp(Rating, 0.f, 1.f);
