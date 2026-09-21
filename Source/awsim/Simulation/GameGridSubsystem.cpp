@@ -1,4 +1,5 @@
 #include "Simulation/GameGridSubsystem.h"
+#include "awsim.h"
 #include "Simulation/GamePlayerFundsSubsystem.h"
 #include "Entities/GridContent.h"
 #include "Engine/World.h"
@@ -90,6 +91,7 @@ namespace
 	void LabelNetworks(const TMap<FGridCoord, FGridContent>& Tiles,
 		TMap<FGridCoord, int32>& OutNet, TArray<EDomain>* OutDomains)
 	{
+		AWSIM_PERF_SCOPE(LabelNetworks);
 		auto DomainOf = [](const FGridContent& C)
 		{
 			return C.Definition ? C.Definition->ConnectorDomain : EDomain::None;
@@ -132,6 +134,7 @@ namespace
 
 void UGridSubsystem::Step(float StepSeconds)
 {
+	AWSIM_PERF_SCOPE(GridStep);
 	// Apply queued placements before domain phases read; invalid ones drop in SetContent.
 	for (FPlacedBuilding& Pending : PendingPlacements)
 	{
@@ -145,10 +148,14 @@ void UGridSubsystem::Step(float StepSeconds)
 	}
 
 	EnsureIslands();
+
+	CSV_CUSTOM_STAT(Awsim, Buildings, Buildings.Num(), ECsvCustomStatOp::Set);
+	CSV_CUSTOM_STAT(Awsim, Islands, Islands.Num(), ECsvCustomStatOp::Set);
 }
 
 void UGridSubsystem::GrowBuildings()
 {
+	AWSIM_PERF_SCOPE(GrowBuildings);
 	TArray<FGridCoord> FullyGrown;
 	for (TPair<FGridCoord, uint8>& Clock : LifetimeAt)
 	{
@@ -253,6 +260,7 @@ bool UGridSubsystem::PickGroundTile(const FVector& RayOrigin, const FVector& Ray
 
 bool UGridSubsystem::PickTile(const FVector& RayOrigin, const FVector& RayDir, FGridCoord& OutTile) const
 {
+	AWSIM_PERF_SCOPE(PickTile);
 	if (RayDir.Z >= 0.f)
 	{
 		return false;
@@ -341,6 +349,7 @@ const FGridContent& UGridSubsystem::GetContentAt(FGridCoord Tile) const
 
 bool UGridSubsystem::SetContent(FGridCoord Tile, FGridContent Content)
 {
+	AWSIM_PERF_SCOPE(SetContent);
 	if (Content.Type == EPlaceableType::None)
 	{
 		if (Roads.Remove(Tile) > 0) { bRoadNetDirty = true; bIslandsDirty = true; ++ContentRevision; return true; }
@@ -537,6 +546,7 @@ void UGridSubsystem::EnsureIslands() const
 
 void UGridSubsystem::RebuildIslands() const
 {
+	AWSIM_PERF_SCOPE(RebuildIslands);
 	Islands.Reset();
 
 	const int32 N = Buildings.Num();

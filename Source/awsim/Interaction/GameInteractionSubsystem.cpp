@@ -62,6 +62,7 @@ namespace
 
 void UGameInteractionSubsystem::Tick(float DeltaSeconds)
 {
+	AWSIM_PERF_SCOPE(InteractionTick);
 	bHasHover = false;
 
 	const UWorld* World = GetWorld();

@@ -1,4 +1,5 @@
 #include "GameEnergySubsystem.h"
+#include "awsim.h"
 #include "GamePlayerFundsSubsystem.h"
 #include "GameSimulationSubsystem.h"
 #include "Engine/World.h"
@@ -6,6 +7,7 @@
 
 void UEnergySubsystem::Step(float StepSeconds)
 {
+	AWSIM_PERF_SCOPE(EnergyStep);
 	UGridSubsystem* GridSubsystem = ResolveGrid();
 	if (!GridSubsystem)
 	{
@@ -42,6 +44,7 @@ void UEnergySubsystem::Step(float StepSeconds)
 
 void UEnergySubsystem::Recompute(const UGridSubsystem& GridSubsystem)
 {
+	AWSIM_PERF_SCOPE(EnergyRecompute);
 	Capacity = 0.f;
 	Consumption = 0.f;
 	MaintenanceCost = 0.f;

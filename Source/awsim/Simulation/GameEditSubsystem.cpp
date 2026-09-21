@@ -1,8 +1,10 @@
 #include "GameEditSubsystem.h"
+#include "awsim.h"
 #include "Engine/World.h"
 
 void UEditSubsystem::Step(float StepSeconds)
 {
+	AWSIM_PERF_SCOPE(EditStep);
 	UGridSubsystem* GridSubsystem = ResolveGrid();
 	if (!GridSubsystem)
 	{

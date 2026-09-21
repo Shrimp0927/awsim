@@ -1,4 +1,5 @@
 #include "Simulation/GameGridRenderSubsystem.h"
+#include "awsim.h"
 #include "Simulation/GameGridSubsystem.h"
 #include "Interaction/GameInteractionSubsystem.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -103,6 +104,7 @@ void UGridRenderSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 void UGridRenderSubsystem::Tick(float DeltaSeconds)
 {
+	AWSIM_PERF_SCOPE(RenderTick);
 	const UWorld* World = GetWorld();
 	const UGridSubsystem* Grid = World ? World->GetSubsystem<UGridSubsystem>() : nullptr;
 	if (!Grid)
@@ -154,6 +156,7 @@ UInstancedStaticMeshComponent* UGridRenderSubsystem::CreateIsmComponent(UStaticM
 
 void UGridRenderSubsystem::UpdateHighlight(const UGridSubsystem& Grid)
 {
+	AWSIM_PERF_SCOPE(UpdateHighlight);
 	const UGameInteractionSubsystem* Interaction = GetWorld() ? GetWorld()->GetSubsystem<UGameInteractionSubsystem>() : nullptr;
 
 	FIntRect Tiles(0, 0, 0, 0);
@@ -236,6 +239,7 @@ UInstancedStaticMeshComponent* UGridRenderSubsystem::EnsureMeshLayer(UStaticMesh
 
 void UGridRenderSubsystem::RebuildInstances(const UGridSubsystem& Grid)
 {
+	AWSIM_PERF_SCOPE(RebuildInstances);
 	for (const TPair<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>>& Pair : MeshLayers)
 	{
 		if (Pair.Value)

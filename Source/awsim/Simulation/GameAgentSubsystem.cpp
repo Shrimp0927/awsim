@@ -1,9 +1,11 @@
 #include "Simulation/GameAgentSubsystem.h"
+#include "awsim.h"
 #include "Simulation/GameCityStatsSubsystem.h"
 #include "Engine/World.h"
 
 void UAgentSubsystem::Step(float StepSeconds)
 {
+	AWSIM_PERF_SCOPE(AgentStep);
 	for (int32 i = Agents.Num() - 1; i >= 0; --i)
 	{
 		Agents[i].Age += StepSeconds;

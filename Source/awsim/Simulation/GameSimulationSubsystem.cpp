@@ -53,6 +53,7 @@ bool USimulationSubsystem::IsTickable() const
 
 void USimulationSubsystem::Tick(float DeltaSeconds)
 {
+	AWSIM_PERF_SCOPE(SimTick);
 	if (OrderedPhases.Num() == 0)
 	{
 		return;
@@ -89,6 +90,8 @@ void USimulationSubsystem::Tick(float DeltaSeconds)
 		Accumulator = 0.f;
 	}
 
+	CSV_CUSTOM_STAT(Awsim, SimSteps, Steps, ECsvCustomStatOp::Set);
+
 	NotifySaveCheckpoint();
 }
 
@@ -103,6 +106,7 @@ void USimulationSubsystem::NotifySaveCheckpoint()
 
 void USimulationSubsystem::StepOnce()
 {
+	AWSIM_PERF_SCOPE(SimStep);
 	for (USimPhase* Phase : OrderedPhases)
 	{
 		if (Phase)

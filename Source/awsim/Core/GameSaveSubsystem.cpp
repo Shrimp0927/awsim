@@ -98,6 +98,7 @@ void UGameSaveSubsystem::NotifyStepCompleted()
 
 bool UGameSaveSubsystem::SaveNow(const FString& SlotName)
 {
+	AWSIM_PERF_SCOPE(SaveNow);
 	UGridSubsystem* G = ResolveGrid();
 	if (!G)
 	{
@@ -190,6 +191,7 @@ bool UGameSaveSubsystem::SaveNow(const FString& SlotName)
 
 bool UGameSaveSubsystem::LoadNow(const FString& SlotName)
 {
+	AWSIM_PERF_SCOPE(LoadNow);
 	UGridSubsystem* G = ResolveGrid();
 	if (!G)
 	{

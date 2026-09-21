@@ -1,4 +1,5 @@
 #include "GameHousingSubsystem.h"
+#include "awsim.h"
 #include "GameEnergySubsystem.h"
 #include "GameWaterSubsystem.h"
 #include "GamePlayerFundsSubsystem.h"
@@ -13,6 +14,7 @@ namespace
 
 void UHousingSubsystem::Step(float StepSeconds)
 {
+	AWSIM_PERF_SCOPE(HousingStep);
 	UGridSubsystem* GridSubsystem = ResolveGrid();
 	UEnergySubsystem* EnergySubsystem = ResolveEnergy();
 	UGameWaterSubsystem* WaterSubsystem = ResolveWater();
@@ -51,6 +53,7 @@ void UHousingSubsystem::Step(float StepSeconds)
 
 void UHousingSubsystem::Recompute(const UGridSubsystem& GridSubsystem, const UEnergySubsystem& EnergySubsystem, const UGameWaterSubsystem& WaterSubsystem)
 {
+	AWSIM_PERF_SCOPE(HousingRecompute);
 	Capacity = 0.f;
 	ServicedCapacity = 0.f;
 	TaxRevenue = 0.f;

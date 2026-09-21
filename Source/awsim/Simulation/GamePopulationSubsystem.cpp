@@ -1,10 +1,12 @@
 #include "GamePopulationSubsystem.h"
+#include "awsim.h"
 #include "GameHousingSubsystem.h"
 #include "GameEconomySubsystem.h"
 #include "Engine/World.h"
 
 void UPopulationSubsystem::Step(float StepSeconds)
 {
+	AWSIM_PERF_SCOPE(PopulationStep);
 	const UHousingSubsystem* HousingSubsystem = ResolveHousing();
 	const UEconomySubsystem* EconomySubsystem = ResolveEconomy();
 	if (!HousingSubsystem || !EconomySubsystem)

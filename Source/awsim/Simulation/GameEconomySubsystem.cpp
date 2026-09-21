@@ -1,9 +1,11 @@
 #include "GameEconomySubsystem.h"
+#include "awsim.h"
 #include "GameEnergySubsystem.h"
 #include "Engine/World.h"
 
 void UEconomySubsystem::Step(float StepSeconds)
 {
+	AWSIM_PERF_SCOPE(EconomyStep);
 	UGridSubsystem* GridSubsystem = ResolveGrid();
 	UEnergySubsystem* EnergySubsystem = ResolveEnergy();
 	if (!GridSubsystem || !EnergySubsystem)
@@ -25,6 +27,7 @@ void UEconomySubsystem::Step(float StepSeconds)
 
 void UEconomySubsystem::Recompute(const UGridSubsystem& GridSubsystem, const UEnergySubsystem& EnergySubsystem)
 {
+	AWSIM_PERF_SCOPE(EconomyRecompute);
 	GDP = 0.f;
 
 	const TArray<TArray<FGridCoord>>& Islands = GridSubsystem.GetIslands();
